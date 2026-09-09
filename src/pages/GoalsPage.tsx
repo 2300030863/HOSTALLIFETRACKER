@@ -8,18 +8,14 @@ import { showToast } from '@/components/ui/Toast'
 
 export default function GoalsPage() {
   const [goals, setGoals] = useState<Goal[]>([])
-  const [loading, setLoading] = useState(true)
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
 
   const loadData = useCallback(async () => {
-    setLoading(true)
     try {
       const data = await goalService.getGoals()
       setGoals(data)
     } catch (err) {
       console.error(err)
-    } finally {
-      setLoading(false)
     }
   }, [])
 

@@ -3,24 +3,20 @@ import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
 import { reminderService } from '@/services/dbServices'
 import type { Reminder } from '@/types'
-import { Plus, Clock, Trash2, Bell } from 'lucide-react'
+import { Plus, Clock, Trash2 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { showToast } from '@/components/ui/Toast'
 
 export default function RemindersPage() {
   const [reminders, setReminders] = useState<Reminder[]>([])
-  const [loading, setLoading] = useState(true)
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
 
   const loadData = useCallback(async () => {
-    setLoading(true)
     try {
       const data = await reminderService.getAllReminders()
       setReminders(data)
     } catch (err) {
       console.error(err)
-    } finally {
-      setLoading(false)
     }
   }, [])
 

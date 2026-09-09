@@ -9,18 +9,14 @@ import { showToast } from '@/components/ui/Toast'
 
 export default function ActivitiesPage() {
   const [activities, setActivities] = useState<Activity[]>([])
-  const [loading, setLoading] = useState(true)
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
 
   const loadData = useCallback(async () => {
-    setLoading(true)
     try {
       const data = await activityService.getTodayActivities()
       setActivities(data)
     } catch (err) {
       console.error(err)
-    } finally {
-      setLoading(false)
     }
   }, [])
 
