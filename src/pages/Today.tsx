@@ -204,7 +204,7 @@ export default function Today() {
                 <p className="text-xs text-surface-500">
                   {attendance
                     ? `Marked as ${attendance.status.toUpperCase()}${attendance.reason ? ` (${attendance.reason})` : attendance.check_in ? ` (${format(new Date(attendance.check_in), 'hh:mm a')})` : ''}`
-                    : 'Not marked today • Window: 9:00 PM → 10:30 PM'}
+                    : 'Not marked today • Biometric Present: 9:00 PM → 10:30 PM (Mark Absent available 24/7)'}
                 </p>
               </div>
             </div>

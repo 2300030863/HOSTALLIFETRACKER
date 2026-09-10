@@ -389,7 +389,7 @@ export const reminderService = {
         .select('*')
         .order('reminder_date', { ascending: true })
 
-      if (!error && data) return data as Reminder[]
+      if (!error && data && data.length > 0) return data as Reminder[]
     } catch {
       // Fallback
     }
@@ -415,6 +415,18 @@ export const reminderService = {
       completed: false,
     }
 
+    // Always save to localStorage first to guarantee instant persistence
+    const local = getLocal<Reminder>(STORAGE_KEYS.reminders)
+    const localItem: Reminder = {
+      id: crypto.randomUUID(),
+      user_id: 'local-user',
+      ...itemData,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    local.unshift(localItem)
+    setLocal(STORAGE_KEYS.reminders, local)
+
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData.user) {
@@ -424,23 +436,17 @@ export const reminderService = {
           .select()
           .single()
 
-        if (!error && data) return data as Reminder
+        if (!error && data) {
+          const updatedLocal = local.map((r) => (r.id === localItem.id ? (data as Reminder) : r))
+          setLocal(STORAGE_KEYS.reminders, updatedLocal)
+          return data as Reminder
+        }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.warn('Supabase createReminder exception:', err)
     }
 
-    const local = getLocal<Reminder>(STORAGE_KEYS.reminders)
-    const item: Reminder = {
-      id: crypto.randomUUID(),
-      user_id: 'local-user',
-      ...itemData,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }
-    local.unshift(item)
-    setLocal(STORAGE_KEYS.reminders, local)
-    return item
+    return localItem
   },
 
   async toggleReminder(id: string, completed: boolean): Promise<void> {
@@ -453,6 +459,20 @@ export const reminderService = {
     const idx = local.findIndex((r) => r.id === id)
     if (idx >= 0) {
       local[idx].completed = completed
+      setLocal(STORAGE_KEYS.reminders, local)
+    }
+  },
+
+  async updateReminder(id: string, payload: Partial<Reminder>): Promise<void> {
+    try {
+      await supabase.from('reminders').update(payload).eq('id', id)
+    } catch (e) {
+      console.warn('Supabase updateReminder error:', e)
+    }
+    const local = getLocal<Reminder>(STORAGE_KEYS.reminders)
+    const idx = local.findIndex((r) => r.id === id)
+    if (idx >= 0) {
+      local[idx] = { ...local[idx], ...payload, updated_at: new Date().toISOString() }
       setLocal(STORAGE_KEYS.reminders, local)
     }
   },
@@ -484,7 +504,7 @@ export const activityService = {
         .eq('activity_date', today)
         .order('created_at', { ascending: false })
 
-      if (!error && data) return data as Activity[]
+      if (!error && data && data.length > 0) return data as Activity[]
     } catch {
       // Fallback
     }
@@ -513,6 +533,18 @@ export const activityService = {
       status: payload.status || 'pending',
     }
 
+    // Save locally first
+    const local = getLocal<Activity>(STORAGE_KEYS.activities)
+    const localItem: Activity = {
+      id: crypto.randomUUID(),
+      user_id: 'local-user',
+      ...itemData,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    local.unshift(localItem)
+    setLocal(STORAGE_KEYS.activities, local)
+
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData.user) {
@@ -522,23 +554,17 @@ export const activityService = {
           .select()
           .single()
 
-        if (!error && data) return data as Activity
+        if (!error && data) {
+          const updatedLocal = local.map((a) => (a.id === localItem.id ? (data as Activity) : a))
+          setLocal(STORAGE_KEYS.activities, updatedLocal)
+          return data as Activity
+        }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.warn('Supabase createActivity exception:', err)
     }
 
-    const local = getLocal<Activity>(STORAGE_KEYS.activities)
-    const item: Activity = {
-      id: crypto.randomUUID(),
-      user_id: 'local-user',
-      ...itemData,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }
-    local.unshift(item)
-    setLocal(STORAGE_KEYS.activities, local)
-    return item
+    return localItem
   },
 
   async updateActivityStatus(id: string, status: ActivityStatus): Promise<void> {
@@ -551,6 +577,20 @@ export const activityService = {
     const idx = local.findIndex((a) => a.id === id)
     if (idx >= 0) {
       local[idx].status = status
+      setLocal(STORAGE_KEYS.activities, local)
+    }
+  },
+
+  async updateActivity(id: string, payload: Partial<Activity>): Promise<void> {
+    try {
+      await supabase.from('activities').update(payload).eq('id', id)
+    } catch (e) {
+      console.warn('Supabase updateActivity error:', e)
+    }
+    const local = getLocal<Activity>(STORAGE_KEYS.activities)
+    const idx = local.findIndex((a) => a.id === id)
+    if (idx >= 0) {
+      local[idx] = { ...local[idx], ...payload, updated_at: new Date().toISOString() }
       setLocal(STORAGE_KEYS.activities, local)
     }
   },
@@ -628,6 +668,33 @@ export const peopleService = {
     setLocal('ht_people', local)
     return item
   },
+
+  async updatePerson(id: string, payload: Partial<Person>): Promise<void> {
+    try {
+      await supabase.from('people').update(payload).eq('id', id)
+    } catch (e) {
+      console.warn('Supabase updatePerson error:', e)
+    }
+    const local = getLocal<Person>('ht_people')
+    const idx = local.findIndex((p) => p.id === id)
+    if (idx >= 0) {
+      local[idx] = { ...local[idx], ...payload, updated_at: new Date().toISOString() }
+      setLocal('ht_people', local)
+    }
+  },
+
+  async deletePerson(id: string): Promise<void> {
+    try {
+      await supabase.from('people').delete().eq('id', id)
+    } catch {
+      // Fallback
+    }
+    const local = getLocal<Person>('ht_people')
+    setLocal(
+      'ht_people',
+      local.filter((p) => p.id !== id)
+    )
+  },
 }
 
 // =====================================
@@ -643,7 +710,7 @@ export const transactionService = {
         .eq('transaction_date', today)
         .order('created_at', { ascending: false })
 
-      if (!error && data) return data as Transaction[]
+      if (!error && data && data.length > 0) return data as Transaction[]
     } catch {
       // Fallback
     }
@@ -659,7 +726,7 @@ export const transactionService = {
         .select('*, person:people(*)')
         .order('transaction_date', { ascending: false })
 
-      if (!error && data) return data as Transaction[]
+      if (!error && data && data.length > 0) return data as Transaction[]
     } catch {
       // Fallback
     }
@@ -693,6 +760,18 @@ export const transactionService = {
       status: 'completed' as const,
     }
 
+    // Always save locally first
+    const local = getLocal<Transaction>(STORAGE_KEYS.transactions)
+    const localItem: Transaction = {
+      id: crypto.randomUUID(),
+      user_id: 'local-user',
+      ...itemData,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    local.unshift(localItem)
+    setLocal(STORAGE_KEYS.transactions, local)
+
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData.user) {
@@ -702,23 +781,31 @@ export const transactionService = {
           .select('*, person:people(*)')
           .single()
 
-        if (!error && data) return data as Transaction
+        if (!error && data) {
+          const updatedLocal = local.map((t) => (t.id === localItem.id ? (data as Transaction) : t))
+          setLocal(STORAGE_KEYS.transactions, updatedLocal)
+          return data as Transaction
+        }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.warn('Supabase createTransaction exception:', err)
     }
 
-    const local = getLocal<Transaction>(STORAGE_KEYS.transactions)
-    const item: Transaction = {
-      id: crypto.randomUUID(),
-      user_id: 'local-user',
-      ...itemData,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+    return localItem
+  },
+
+  async updateTransaction(id: string, payload: Partial<Transaction>): Promise<void> {
+    try {
+      await supabase.from('transactions').update(payload).eq('id', id)
+    } catch (e) {
+      console.warn('Supabase updateTransaction error:', e)
     }
-    local.unshift(item)
-    setLocal(STORAGE_KEYS.transactions, local)
-    return item
+    const local = getLocal<Transaction>(STORAGE_KEYS.transactions)
+    const idx = local.findIndex((t) => t.id === id)
+    if (idx >= 0) {
+      local[idx] = { ...local[idx], ...payload, updated_at: new Date().toISOString() }
+      setLocal(STORAGE_KEYS.transactions, local)
+    }
   },
 
   async deleteTransaction(id: string): Promise<void> {
@@ -846,6 +933,20 @@ export const goalService = {
       return local[idx]
     }
     return null
+  },
+
+  async updateGoalDetails(id: string, payload: Partial<Goal>): Promise<void> {
+    try {
+      await supabase.from('goals').update(payload).eq('id', id)
+    } catch (e) {
+      console.warn('Supabase updateGoal error:', e)
+    }
+    const local = getLocal<Goal>(STORAGE_KEYS.goals)
+    const idx = local.findIndex((g) => g.id === id)
+    if (idx >= 0) {
+      local[idx] = { ...local[idx], ...payload, updated_at: new Date().toISOString() }
+      setLocal(STORAGE_KEYS.goals, local)
+    }
   },
 
   async deleteGoal(id: string): Promise<void> {
@@ -989,7 +1090,7 @@ export const noteService = {
   async getNotes(): Promise<Note[]> {
     try {
       const { data, error } = await supabase.from('notes').select('*').order('created_at', { ascending: false })
-      if (!error && data) return data as Note[]
+      if (!error && data && data.length > 0) return data as Note[]
     } catch {
       // Fallback
     }
@@ -1003,6 +1104,18 @@ export const noteService = {
       tags: tags || [],
     }
 
+    // Save locally first
+    const local = getLocal<Note>(STORAGE_KEYS.notes)
+    const localItem: Note = {
+      id: crypto.randomUUID(),
+      user_id: 'local-user',
+      ...itemData,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    local.unshift(localItem)
+    setLocal(STORAGE_KEYS.notes, local)
+
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData.user) {
@@ -1012,23 +1125,17 @@ export const noteService = {
           .select()
           .single()
 
-        if (!error && data) return data as Note
+        if (!error && data) {
+          const updatedLocal = local.map((n) => (n.id === localItem.id ? (data as Note) : n))
+          setLocal(STORAGE_KEYS.notes, updatedLocal)
+          return data as Note
+        }
       }
-    } catch {
-      // Fallback
+    } catch (err) {
+      console.warn('Supabase createNote exception:', err)
     }
 
-    const local = getLocal<Note>(STORAGE_KEYS.notes)
-    const item: Note = {
-      id: crypto.randomUUID(),
-      user_id: 'local-user',
-      ...itemData,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }
-    local.unshift(item)
-    setLocal(STORAGE_KEYS.notes, local)
-    return item
+    return localItem
   },
 
   async deleteNote(id: string): Promise<void> {

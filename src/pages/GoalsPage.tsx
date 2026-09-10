@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
+import { EditGoalModal } from '@/components/ui/EditGoalModal'
 import { goalService } from '@/services/dbServices'
 import type { Goal } from '@/types'
-import { Plus, Target, Trash2, CheckCircle2 } from 'lucide-react'
+import { Plus, Target, Trash2, CheckCircle2, Pencil } from 'lucide-react'
 import { showToast } from '@/components/ui/Toast'
 
 export default function GoalsPage() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -54,7 +56,7 @@ export default function GoalsPage() {
           </div>
           <button
             onClick={() => setIsQuickAddOpen(true)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-md shadow-purple-600/20 transition-all"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-md shadow-purple-600/20 transition-all cursor-pointer"
           >
             <Plus size={16} />
             <span>Add Goal</span>
@@ -89,13 +91,21 @@ export default function GoalsPage() {
                           {goal.title}
                         </h4>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-black text-purple-600 dark:text-purple-400">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-black text-purple-600 dark:text-purple-400 mr-1">
                           {percent}%
                         </span>
                         <button
+                          onClick={() => setEditingGoal(goal)}
+                          className="p-1.5 rounded-xl text-surface-400 hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/40 transition-colors cursor-pointer"
+                          title="Edit Goal"
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button
                           onClick={() => handleDelete(goal.id)}
-                          className="p-1 text-surface-400 hover:text-rose-600 transition-colors"
+                          className="p-1.5 rounded-xl text-surface-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                          title="Delete Goal"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -118,13 +128,13 @@ export default function GoalsPage() {
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => handleGoalProgress(goal, 10)}
-                          className="px-2.5 py-1 rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 text-xs font-bold hover:bg-purple-200 transition-all"
+                          className="px-2.5 py-1 rounded-xl bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 text-xs font-bold hover:bg-purple-200 transition-all cursor-pointer"
                         >
                           +10
                         </button>
                         <button
                           onClick={() => handleGoalProgress(goal, 25)}
-                          className="px-2.5 py-1 rounded-xl bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 transition-all"
+                          className="px-2.5 py-1 rounded-xl bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 transition-all cursor-pointer"
                         >
                           +25
                         </button>
@@ -142,6 +152,13 @@ export default function GoalsPage() {
         isOpen={isQuickAddOpen}
         initialTab="goal"
         onClose={() => setIsQuickAddOpen(false)}
+        onSuccess={loadData}
+      />
+
+      <EditGoalModal
+        goal={editingGoal}
+        isOpen={Boolean(editingGoal)}
+        onClose={() => setEditingGoal(null)}
         onSuccess={loadData}
       />
     </AppLayout>

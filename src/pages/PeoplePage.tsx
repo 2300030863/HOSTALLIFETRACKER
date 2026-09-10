@@ -2,8 +2,9 @@ import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { peopleService, transactionService } from '@/services/dbServices'
 import type { Person, Transaction } from '@/types'
-import { Phone, UserPlus, X } from 'lucide-react'
+import { Phone, UserPlus, X, Pencil, Trash2 } from 'lucide-react'
 import { showToast } from '@/components/ui/Toast'
+import { EditPersonModal } from '@/components/ui/EditPersonModal'
 
 interface PersonBalance {
   person: Person
@@ -18,10 +19,23 @@ export default function PeoplePage() {
 
   // Add Person Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [editingPerson, setEditingPerson] = useState<Person | null>(null)
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const handleDeletePerson = async (id: string, name: string) => {
+    if (window.confirm(`Are you sure you want to remove ${name}?`)) {
+      try {
+        await peopleService.deletePerson(id)
+        showToast.success(`Removed ${name}`)
+        loadData()
+      } catch (err) {
+        showToast.error('Failed to delete person')
+      }
+    }
+  }
 
   const loadData = useCallback(async () => {
     try {
@@ -223,11 +237,28 @@ export default function PeoplePage() {
                     {net !== 0 && (
                       <button
                         onClick={() => handleSettleUp(person.name, net)}
-                        className="px-3 py-1.5 rounded-xl bg-surface-900 text-white dark:bg-surface-700 hover:bg-surface-800 text-xs font-bold transition-all shrink-0"
+                        className="px-3 py-1.5 rounded-xl bg-surface-900 text-white dark:bg-surface-700 hover:bg-surface-800 text-xs font-bold transition-all shrink-0 cursor-pointer"
                       >
                         Settle Up 🤝
                       </button>
                     )}
+
+                    <div className="flex items-center gap-1 ml-1">
+                      <button
+                        onClick={() => setEditingPerson(person)}
+                        className="p-2 rounded-xl text-surface-400 hover:text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-950/40 transition-colors cursor-pointer"
+                        title="Edit Person"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      <button
+                        onClick={() => handleDeletePerson(person.id, person.name)}
+                        className="p-2 rounded-xl text-surface-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                        title="Delete Person"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -235,6 +266,13 @@ export default function PeoplePage() {
           )}
         </div>
       </div>
+
+      <EditPersonModal
+        person={editingPerson}
+        isOpen={Boolean(editingPerson)}
+        onClose={() => setEditingPerson(null)}
+        onSuccess={loadData}
+      />
 
       {/* Add Person Modal */}
       {isAddModalOpen && (

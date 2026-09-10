@@ -17,7 +17,7 @@ const PRESET_REASONS = [
 ]
 
 export function AbsentReasonModal({ isOpen, onClose, onConfirm }: AbsentReasonModalProps) {
-  const [selectedPreset, setSelectedPreset] = useState('sick')
+  const [selectedPreset, setSelectedPreset] = useState('home')
   const [customReason, setCustomReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -54,7 +54,7 @@ export function AbsentReasonModal({ isOpen, onClose, onConfirm }: AbsentReasonMo
                 Reason for Absence
               </h2>
               <p className="text-xs text-surface-500">
-                Please select or enter the reason for marking absent today
+                Marking Absent (Home Visit / Sick) is available 24/7 at any time of day
               </p>
             </div>
           </div>

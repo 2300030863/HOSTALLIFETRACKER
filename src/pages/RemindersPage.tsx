@@ -1,15 +1,17 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
+import { EditReminderModal } from '@/components/ui/EditReminderModal'
 import { reminderService } from '@/services/dbServices'
 import type { Reminder } from '@/types'
-import { Plus, Clock, Trash2 } from 'lucide-react'
+import { Plus, Clock, Trash2, Pencil } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { showToast } from '@/components/ui/Toast'
 
 export default function RemindersPage() {
   const [reminders, setReminders] = useState<Reminder[]>([])
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
+  const [editingReminder, setEditingReminder] = useState<Reminder | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -49,7 +51,7 @@ export default function RemindersPage() {
           </div>
           <button
             onClick={() => setIsQuickAddOpen(true)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition-all cursor-pointer"
           >
             <Plus size={16} />
             <span>Add Reminder</span>
@@ -104,12 +106,22 @@ export default function RemindersPage() {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => handleDelete(reminder.id)}
-                    className="p-1.5 text-surface-400 hover:text-rose-600 transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setEditingReminder(reminder)}
+                      className="p-2 rounded-xl text-surface-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors cursor-pointer"
+                      title="Edit Reminder"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(reminder.id)}
+                      className="p-2 rounded-xl text-surface-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                      title="Delete Reminder"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -121,6 +133,13 @@ export default function RemindersPage() {
         isOpen={isQuickAddOpen}
         initialTab="reminder"
         onClose={() => setIsQuickAddOpen(false)}
+        onSuccess={loadData}
+      />
+
+      <EditReminderModal
+        reminder={editingReminder}
+        isOpen={Boolean(editingReminder)}
+        onClose={() => setEditingReminder(null)}
         onSuccess={loadData}
       />
     </AppLayout>

@@ -11,9 +11,11 @@ import {
   Calendar,
   Tag,
   CreditCard,
+  Pencil,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { showToast } from '@/components/ui/Toast'
+import { EditTransactionModal } from '@/components/ui/EditTransactionModal'
 
 type MoneyFilter = 'all' | 'expense' | 'given' | 'received'
 
@@ -23,6 +25,7 @@ export default function MoneyPage() {
   const [activeFilter, setActiveFilter] = useState<MoneyFilter>('all')
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
   const [modalMoneyType, setModalMoneyType] = useState<'expense' | 'given' | 'received'>('expense')
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -290,13 +293,22 @@ export default function MoneyPage() {
                         </p>
                       </div>
 
-                      <button
-                        onClick={() => handleDelete(tx.id)}
-                        className="p-1.5 text-surface-400 hover:text-rose-600 transition-colors"
-                        title="Delete record"
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setEditingTransaction(tx)}
+                          className="p-1.5 rounded-xl text-surface-400 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors cursor-pointer"
+                          title="Edit transaction"
+                        >
+                          <Pencil size={16} />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(tx.id)}
+                          className="p-1.5 rounded-xl text-surface-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                          title="Delete record"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -311,6 +323,13 @@ export default function MoneyPage() {
         initialTab="money"
         initialMoneyType={modalMoneyType}
         onClose={() => setIsQuickAddOpen(false)}
+        onSuccess={loadData}
+      />
+
+      <EditTransactionModal
+        transaction={editingTransaction}
+        isOpen={Boolean(editingTransaction)}
+        onClose={() => setEditingTransaction(null)}
         onSuccess={loadData}
       />
     </AppLayout>

@@ -90,7 +90,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
 
   return (
     <div className="min-h-dvh bg-surface-50 dark:bg-surface-950 flex flex-col text-surface-900 dark:text-surface-50 font-sans transition-colors duration-200">
-      {/* Top Header */}
+      {/* Top Header - Neat & Spacious */}
       <header className="sticky top-0 z-40 w-full bg-white/95 dark:bg-surface-900/95 backdrop-blur-xl border-b border-surface-200/80 dark:border-surface-800/80 shadow-sm transition-colors">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 sm:px-6 py-3">
           {/* Logo & Greeting */}
@@ -111,42 +111,12 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
             </div>
           </Link>
 
-          {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1 bg-surface-100 dark:bg-surface-800/90 p-1.5 rounded-2xl border border-surface-200 dark:border-surface-700/60 shadow-inner">
-            {desktopNavItems.map((item) => {
-              const isActive = location.pathname === item.path
-              return (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  className={cn(
-                    'flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all',
-                    isActive
-                      ? 'bg-primary-600 text-white shadow-md shadow-primary-600/30 font-bold'
-                      : 'text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white hover:bg-surface-200/60 dark:hover:bg-surface-700/50'
-                  )}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </Link>
-              )
-            })}
-          </nav>
-
-          {/* Right Header Actions */}
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => handleOpenQuickAdd('money')}
-              className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold shadow-md shadow-primary-500/25 transition-all active:scale-95"
-            >
-              <Plus size={16} />
-              <span>Add New</span>
-            </button>
-
+          {/* Right Header Actions (Desktop/Tablet Only to avoid duplicates on Mobile Phone) */}
+          <div className="hidden md:flex items-center gap-1.5 shrink-0">
             {/* Notification Settings Toggle */}
             <button
               onClick={() => setIsNotificationModalOpen(true)}
-              className="flex h-9 w-9 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-400 transition-all"
+              className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-300 transition-all cursor-pointer border-0 outline-none"
               title="Notification Settings"
             >
               <Bell size={18} />
@@ -155,7 +125,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
             {/* Dark/Light mode toggle */}
             <button
               onClick={() => setIsDark(!isDark)}
-              className="flex h-9 w-9 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-400 transition-all"
+              className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-300 transition-all cursor-pointer border-0 outline-none"
               title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             >
               {isDark ? <Sun size={18} className="text-amber-400" /> : <Moon size={18} />}
@@ -164,7 +134,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
             {/* Sign Out */}
             <button
               onClick={signOut}
-              className="flex h-9 w-9 items-center justify-center rounded-xl text-surface-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:text-surface-400 dark:hover:text-rose-400 transition-all"
+              className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:text-surface-400 dark:hover:text-rose-400 transition-all cursor-pointer border-0 outline-none"
               title="Sign Out"
             >
               <LogOut size={18} />
@@ -175,6 +145,30 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
 
       {/* Main Page Content */}
       <main className="flex-1 mx-auto w-full max-w-5xl px-4 sm:px-6 py-6 pb-28">
+        {/* Full-Width Body Navigation Bar (Desktop/Tablet Only) */}
+        <div className="hidden md:block mb-6 w-full overflow-x-auto no-scrollbar py-1">
+          <nav className="w-full min-w-[640px] flex items-center justify-between bg-white/90 dark:bg-surface-900/90 backdrop-blur-xl p-1.5 rounded-2xl border border-surface-200/80 dark:border-surface-800/80 shadow-sm">
+            {desktopNavItems.map((item) => {
+              const isActive = location.pathname === item.path
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold whitespace-nowrap transition-all',
+                    isActive
+                      ? 'bg-primary-600 text-white shadow-md shadow-primary-600/30 font-bold scale-[1.02]'
+                      : 'text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white hover:bg-surface-100 dark:hover:bg-surface-800/80'
+                  )}
+                >
+                  {item.icon}
+                  <span>{item.label}</span>
+                </Link>
+              )
+            })}
+          </nav>
+        </div>
+
         {children}
       </main>
 

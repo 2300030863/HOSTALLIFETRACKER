@@ -3,13 +3,15 @@ import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
 import { activityService } from '@/services/dbServices'
 import type { Activity } from '@/types'
-import { Plus, CheckCircle2, Trash2 } from 'lucide-react'
+import { Plus, CheckCircle2, Trash2, Pencil } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { showToast } from '@/components/ui/Toast'
+import { EditActivityModal } from '@/components/ui/EditActivityModal'
 
 export default function ActivitiesPage() {
   const [activities, setActivities] = useState<Activity[]>([])
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
+  const [editingActivity, setEditingActivity] = useState<Activity | null>(null)
 
   const loadData = useCallback(async () => {
     try {
@@ -97,12 +99,22 @@ export default function ActivitiesPage() {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => handleDelete(act.id)}
-                    className="p-1.5 text-surface-400 hover:text-rose-600 transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setEditingActivity(act)}
+                      className="p-1.5 rounded-xl text-surface-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors cursor-pointer"
+                      title="Edit Activity"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(act.id)}
+                      className="p-1.5 rounded-xl text-surface-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                      title="Delete Activity"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -114,6 +126,13 @@ export default function ActivitiesPage() {
         isOpen={isQuickAddOpen}
         initialTab="activity"
         onClose={() => setIsQuickAddOpen(false)}
+        onSuccess={loadData}
+      />
+
+      <EditActivityModal
+        activity={editingActivity}
+        isOpen={Boolean(editingActivity)}
+        onClose={() => setEditingActivity(null)}
         onSuccess={loadData}
       />
     </AppLayout>
