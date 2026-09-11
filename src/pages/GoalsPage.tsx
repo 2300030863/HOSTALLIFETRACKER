@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
 import { EditGoalModal } from '@/components/ui/EditGoalModal'
-import { goalService } from '@/services/dbServices'
+import { goalService, subscribeToRealtime } from '@/services/dbServices'
 import type { Goal } from '@/types'
 import { Plus, Target, Trash2, CheckCircle2, Pencil } from 'lucide-react'
 import { showToast } from '@/components/ui/Toast'
@@ -23,7 +23,11 @@ export default function GoalsPage() {
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+    const unsubscribe = subscribeToRealtime(() => {
+      loadData()
+    })
+    return () => unsubscribe()
+  }, [])
 
   const handleGoalProgress = async (goal: Goal, delta: number) => {
     const newVal = Math.min(goal.target, Math.max(0, goal.current_value + delta))

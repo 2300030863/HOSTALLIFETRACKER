@@ -8,6 +8,7 @@ import {
 } from 'react'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/services/supabase'
+import { syncLocalDataToCloud, clearLocalUserStorage } from '@/services/dbServices'
 import type { Profile } from '@/types'
 
 interface AuthContextType {
@@ -21,10 +22,17 @@ interface AuthContextType {
   signOut: () => Promise<void>
   resetPassword: (email: string) => Promise<{ error: string | null }>
   updatePassword: (password: string) => Promise<{ error: string | null }>
+  updateProfile: (payload: Partial<Profile>) => Promise<{ error: string | null }>
   refreshProfile: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+const getRedirectUrl = (path: string = 'reset-password') => {
+  const envUrl = import.meta.env.VITE_APP_URL || import.meta.env.VITE_PUBLIC_SITE_URL
+  const baseUrl = envUrl ? envUrl.replace(/\/$/, '') : window.location.origin
+  return `${baseUrl}/${path.replace(/^\//, '')}`
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
@@ -33,19 +41,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const [initialized, setInitialized] = useState(false)
 
-  const fetchProfile = useCallback(async (userId: string) => {
+  const fetchProfile = useCallback(async (userId: string, currentUser?: User | null) => {
     try {
-      const { data, error } = await supabase
+      // Non-blocking sync
+      syncLocalDataToCloud(userId).catch(() => {})
+
+      let { data } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single()
+        .maybeSingle()
 
-      if (error) {
-        // Profile might not exist yet (new user)
-        console.log('Profile not found, user may need to create one.')
-        setProfile(null)
-        return
+      if (!data && currentUser) {
+        const newProfile = {
+          id: userId,
+          full_name: currentUser?.user_metadata?.full_name || currentUser?.email?.split('@')[0] || 'User',
+          email: currentUser?.email || '',
+        }
+        const { data: created } = await supabase
+          .from('profiles')
+          .upsert(newProfile)
+          .select()
+          .single()
+
+        if (created) data = created as Profile
+        else data = newProfile as Profile
       }
 
       setProfile(data)
@@ -57,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshProfile = useCallback(async () => {
     if (user) {
-      await fetchProfile(user.id)
+      await fetchProfile(user.id, user)
     }
   }, [user, fetchProfile])
 
@@ -71,7 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(initialSession?.user ?? null)
 
         if (initialSession?.user) {
-          await fetchProfile(initialSession.user.id)
+          await fetchProfile(initialSession.user.id, initialSession.user)
         }
       } catch {
         console.warn('Failed to get initial session (Supabase may not be configured)')
@@ -92,7 +112,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(newSession?.user ?? null)
 
           if (event === 'SIGNED_IN' && newSession?.user) {
-            await fetchProfile(newSession.user.id)
+            await fetchProfile(newSession.user.id, newSession.user)
           }
 
           if (event === 'SIGNED_OUT') {
@@ -112,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string, fullName: string) => {
     try {
+      const redirectUrl = getRedirectUrl('reset-password')
       const { error } = await supabase.auth.signUp({
         email,
         password,
@@ -119,6 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           data: {
             full_name: fullName,
           },
+          emailRedirectTo: redirectUrl,
         },
       })
       if (error) return { error: error.message }
@@ -146,12 +168,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     setSession(null)
     setProfile(null)
+    clearLocalUserStorage()
   }
 
   const resetPassword = async (email: string) => {
     try {
+      const redirectUrl = getRedirectUrl('reset-password')
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: redirectUrl,
       })
       if (error) return { error: error.message }
       return { error: null }
@@ -170,6 +194,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const updateProfile = async (payload: Partial<Profile>) => {
+    try {
+      if (!user) return { error: 'Not authenticated' }
+      const { error } = await supabase
+        .from('profiles')
+        .upsert({ id: user.id, email: user.email || '', ...payload, updated_at: new Date().toISOString() })
+
+      if (error) return { error: error.message }
+      await fetchProfile(user.id, user)
+      return { error: null }
+    } catch {
+      return { error: 'Failed to update profile' }
+    }
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -183,6 +222,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signOut,
         resetPassword,
         updatePassword,
+        updateProfile,
         refreshProfile,
       }}
     >

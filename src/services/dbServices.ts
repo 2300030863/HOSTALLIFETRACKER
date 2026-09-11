@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, isSupabaseConfigured } from './supabase'
 import type {
   Attendance,
   AttendanceStatus,
@@ -50,7 +50,18 @@ function setLocal<T>(key: string, items: T[]): void {
 
 const getTodayStr = () => new Date().toISOString().split('T')[0]
 
-export function getAppStartDate(): string {
+export async function getAppStartDate(): Promise<string> {
+  try {
+    const { data: userData } = await supabase.auth.getUser()
+    if (userData?.user?.created_at) {
+      const createdDateStr = userData.user.created_at.split('T')[0]
+      localStorage.setItem(STORAGE_KEYS.appStartDate, createdDateStr)
+      return createdDateStr
+    }
+  } catch {
+    // Fallback if offline
+  }
+
   try {
     let start = localStorage.getItem(STORAGE_KEYS.appStartDate)
     if (!start) {
@@ -114,6 +125,31 @@ export function checkAttendanceWindow(dateObj: Date = new Date()): AttendanceWin
 // ATTENDANCE SERVICE
 // =====================================
 export const attendanceService = {
+  async hasTodayAttendanceInDb(): Promise<boolean> {
+    const today = getTodayStr()
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (userData?.user) {
+        const { data, error } = await supabase
+          .from('attendance')
+          .select('id, status')
+          .eq('user_id', userData.user.id)
+          .eq('attendance_date', today)
+          .maybeSingle()
+
+        if (!error && data) {
+          return true
+        }
+        return false
+      }
+    } catch {
+      // Fallback if offline
+    }
+
+    const local = getLocal<Attendance>(STORAGE_KEYS.attendance)
+    return local.some((a) => a.attendance_date === today)
+  },
+
   async getTodayAttendance(): Promise<Attendance | null> {
     const today = getTodayStr()
     const windowInfo = checkAttendanceWindow()
@@ -121,11 +157,12 @@ export const attendanceService = {
     let record: Attendance | null = null
 
     try {
-      const { data, error } = await supabase
-        .from('attendance')
-        .select('*')
-        .eq('attendance_date', today)
-        .maybeSingle()
+      const { data: userData } = await supabase.auth.getUser()
+      let query = supabase.from('attendance').select('*').eq('attendance_date', today)
+      if (userData?.user) {
+        query = query.eq('user_id', userData.user.id)
+      }
+      const { data, error } = await query.maybeSingle()
 
       if (!error && data) record = data as Attendance
     } catch {
@@ -150,16 +187,12 @@ export const attendanceService = {
     const now = new Date().toISOString()
     const windowInfo = checkAttendanceWindow()
 
-    // Enforce 9:00 PM - 10:30 PM rule for PRESENT and LATE
-    if ((status === 'present' || status === 'late') && !windowInfo.isOpen) {
-      if (windowInfo.isAfterWindow) {
-        // Auto-mark absent when trying to mark present after 10:30 PM
-        await this.markAttendance('absent', 'Attendance window expired')
-        throw new Error(
-          "❌ Attendance Closed\nToday's attendance window closed at 10:30 PM. You have been automatically marked ABSENT."
-        )
-      } else if (windowInfo.isBeforeWindow) {
-        throw new Error("⏳ Attendance Closed\nAttendance window opens at 9:00 PM.")
+    // Window info check (logs notice if outside 9:00 PM - 10:30 PM window, but allows manual submission)
+    if (!windowInfo.isOpen && !reason) {
+      if (windowInfo.isBeforeWindow) {
+        reason = 'Submitted before window (Manual Present)'
+      } else if (windowInfo.isAfterWindow) {
+        reason = 'Submitted after window (Manual Present)'
       }
     }
 
@@ -182,17 +215,21 @@ export const attendanceService = {
           .select()
           .single()
 
-        if (!error && data) {
+        if (error) {
+          throw new Error(`Database error: ${error.message || 'Failed to save attendance to Supabase.'}`)
+        }
+
+        if (data) {
           return data as Attendance
         }
       }
     } catch (err: any) {
-      if (err.message && err.message.includes('Attendance Closed')) {
+      if (err.message) {
         throw err
       }
     }
 
-    // Local fallback
+    // Local fallback (only for demo/unauthenticated mode)
     const local = getLocal<Attendance>(STORAGE_KEYS.attendance)
     const existingIdx = local.findIndex((a) => a.attendance_date === today)
     const item: Attendance = {
@@ -219,10 +256,11 @@ export const attendanceService = {
 
     try {
       const { data: userData } = await supabase.auth.getUser()
-      if (userData.user) {
+      if (userData?.user) {
         const { data, error } = await supabase
           .from('attendance')
           .update({ check_out: now })
+          .eq('user_id', userData.user.id)
           .eq('attendance_date', today)
           .select()
           .single()
@@ -249,7 +287,7 @@ export const attendanceService = {
       localStorage.setItem(STORAGE_KEYS.appStartDate, today)
       localStorage.removeItem(STORAGE_KEYS.attendance)
       const { data: userData } = await supabase.auth.getUser()
-      if (userData.user) {
+      if (userData?.user) {
         await supabase.from('attendance').delete().eq('user_id', userData.user.id)
       }
     } catch (e) {
@@ -260,19 +298,18 @@ export const attendanceService = {
   async getAllAttendance(daysCount: number = 30): Promise<Attendance[]> {
     let existingRecords: Attendance[] = []
     try {
-      const { data, error } = await supabase
-        .from('attendance')
-        .select('*')
-        .order('attendance_date', { ascending: false })
+      const { data: userData } = await supabase.auth.getUser()
+      let query = supabase.from('attendance').select('*')
+      if (userData?.user) {
+        query = query.eq('user_id', userData.user.id)
+      }
+      const { data, error } = await query.order('attendance_date', { ascending: false })
 
-      if (!error && data) {
+      if (!error && data !== null) {
         existingRecords = data as Attendance[]
       }
-    } catch {
-      // Fallback
-    }
-
-    if (existingRecords.length === 0) {
+    } catch (err) {
+      console.error('Failed to query Supabase attendance:', err)
       existingRecords = getLocal<Attendance>(STORAGE_KEYS.attendance)
     }
 
@@ -281,76 +318,73 @@ export const attendanceService = {
 
     const todayObj = new Date()
     const todayStr = todayObj.toISOString().split('T')[0]
-    const result: Attendance[] = []
     const windowInfo = checkAttendanceWindow()
+    const result: Attendance[] = []
 
-    const appStartStr = getAppStartDate()
-    let appStartDateObj = new Date(appStartStr)
-    if (isNaN(appStartDateObj.getTime())) {
-      appStartDateObj = new Date(todayStr)
-    }
+    // Calculate earliest date for the requested daysCount timeframe
+    const earliestDate = new Date(todayObj)
+    earliestDate.setDate(todayObj.getDate() - (daysCount - 1))
 
-    // Determine earliest date based on appStartDate and daysCount filter
-    let earliestDate = appStartDateObj
-    const daysLimitObj = new Date(todayObj)
-    daysLimitObj.setDate(todayObj.getDate() - (daysCount - 1))
-
-    if (daysLimitObj > earliestDate) {
-      earliestDate = daysLimitObj
-    }
-
-    // If explicit records exist prior to earliestDate, adjust to earliest recorded date
+    // If explicit database records exist prior to earliestDate, adjust to include them
     if (existingRecords.length > 0) {
       const dates = existingRecords.map((r) => r.attendance_date).sort()
       if (dates[0]) {
         const firstRecorded = new Date(dates[0])
         if (!isNaN(firstRecorded.getTime()) && firstRecorded < earliestDate) {
-          earliestDate = firstRecorded
+          earliestDate.setTime(firstRecorded.getTime())
         }
       }
     }
 
     const curr = new Date(todayObj)
-    // Avoid infinite loop safeguard
     let safetyCounter = 0
-    while (curr >= earliestDate && safetyCounter < 365) {
+    while (curr >= earliestDate && safetyCounter < 366) {
       safetyCounter++
       const dateStr = curr.toISOString().split('T')[0]
       const existing = recordMap.get(dateStr)
 
       if (existing) {
-        // If an existing record was saved with status 'pending' but its date is BEFORE today, force it to 'absent'!
+        // If past date was stored as pending, update status to present
         const isPastDate = dateStr < todayStr
         if (isPastDate && (existing.status as string) === 'pending') {
           result.push({
             ...existing,
-            status: 'absent',
-            reason: existing.reason || 'Auto-Absent (No response in 9:00 PM - 10:30 PM window)',
+            status: 'present',
+            reason: null,
           })
         } else {
           result.push(existing)
         }
       } else {
         const isToday = dateStr === todayStr
-        let status: AttendanceStatus = 'absent'
-        let reason: string | null = 'Auto-Absent (No response in 9:00 PM - 10:30 PM window)'
-
         if (isToday) {
-          status = windowInfo.isAfterWindow ? 'absent' : 'pending'
-          if (status === 'pending') reason = null
+          const status: AttendanceStatus = windowInfo.isAfterWindow ? 'absent' : 'pending'
+          const reason = windowInfo.isAfterWindow ? 'Attendance window expired' : null
+          result.push({
+            id: `today-${dateStr}`,
+            user_id: 'user',
+            attendance_date: dateStr,
+            check_in: null,
+            check_out: null,
+            status,
+            source: 'manual',
+            reason,
+            created_at: dateStr,
+          })
+        } else {
+          // Past unsubmitted day -> Default to Present
+          result.push({
+            id: `synth-${dateStr}`,
+            user_id: 'user',
+            attendance_date: dateStr,
+            check_in: null,
+            check_out: null,
+            status: 'present',
+            source: 'manual',
+            reason: null,
+            created_at: dateStr,
+          })
         }
-
-        result.push({
-          id: `synth-${dateStr}`,
-          user_id: 'user',
-          attendance_date: dateStr,
-          check_in: null,
-          check_out: null,
-          status,
-          source: 'manual',
-          reason,
-          created_at: dateStr,
-        })
       }
 
       curr.setDate(curr.getDate() - 1)
@@ -373,7 +407,10 @@ export const reminderService = {
         .or(`reminder_date.eq.${today},repeat_type.eq.daily`)
         .order('reminder_time', { ascending: true })
 
-      if (!error && data && data.length > 0) return data as Reminder[]
+      if (!error && data !== null) {
+        setLocal(STORAGE_KEYS.reminders, data as Reminder[])
+        return data as Reminder[]
+      }
     } catch {
       // Fallback
     }
@@ -389,7 +426,10 @@ export const reminderService = {
         .select('*')
         .order('reminder_date', { ascending: true })
 
-      if (!error && data && data.length > 0) return data as Reminder[]
+      if (!error && data !== null) {
+        setLocal(STORAGE_KEYS.reminders, data as Reminder[])
+        return data as Reminder[]
+      }
     } catch {
       // Fallback
     }
@@ -504,7 +544,10 @@ export const activityService = {
         .eq('activity_date', today)
         .order('created_at', { ascending: false })
 
-      if (!error && data && data.length > 0) return data as Activity[]
+      if (!error && data !== null) {
+        setLocal(STORAGE_KEYS.activities, data as Activity[])
+        return data as Activity[]
+      }
     } catch {
       // Fallback
     }
@@ -616,21 +659,17 @@ export const peopleService = {
   async getPeople(): Promise<Person[]> {
     try {
       const { data, error } = await supabase.from('people').select('*').order('name', { ascending: true })
-      if (!error && data && data.length > 0) return data as Person[]
+      if (!error && data !== null) {
+        setLocal('ht_people', data as Person[])
+        return data as Person[]
+      }
     } catch {
       // Fallback
     }
 
+    if (isSupabaseConfigured) return []
+
     const local = getLocal<Person>('ht_people')
-    if (local.length === 0) {
-      const defaultPeople: Person[] = [
-        { id: 'p1', user_id: 'local-user', name: 'Ravi', phone: '9876543210', notes: 'Hostel roommate', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-        { id: 'p2', user_id: 'local-user', name: 'Suresh', phone: '9876543211', notes: 'Classmate', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-        { id: 'p3', user_id: 'local-user', name: 'Rahul', phone: '9876543212', notes: 'Canteen / Mess', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      ]
-      setLocal('ht_people', defaultPeople)
-      return defaultPeople
-    }
     return local
   },
 
@@ -710,7 +749,10 @@ export const transactionService = {
         .eq('transaction_date', today)
         .order('created_at', { ascending: false })
 
-      if (!error && data && data.length > 0) return data as Transaction[]
+      if (!error && data !== null) {
+        setLocal(STORAGE_KEYS.transactions, data as Transaction[])
+        return data as Transaction[]
+      }
     } catch {
       // Fallback
     }
@@ -726,7 +768,10 @@ export const transactionService = {
         .select('*, person:people(*)')
         .order('transaction_date', { ascending: false })
 
-      if (!error && data && data.length > 0) return data as Transaction[]
+      if (!error && data !== null) {
+        setLocal(STORAGE_KEYS.transactions, data as Transaction[])
+        return data as Transaction[]
+      }
     } catch {
       // Fallback
     }
@@ -833,30 +878,17 @@ export const goalService = {
         .select('*')
         .order('created_at', { ascending: false })
 
-      if (!error && data && data.length > 0) return data as Goal[]
+      if (!error && data !== null) {
+        setLocal(STORAGE_KEYS.goals, data as Goal[])
+        return data as Goal[]
+      }
     } catch {
       // Fallback
     }
 
+    if (isSupabaseConfigured) return []
+
     const local = getLocal<Goal>(STORAGE_KEYS.goals)
-    if (local.length === 0) {
-      // Provide default starting goal for nice initial UX
-      const defaultGoal: Goal = {
-        id: 'default-goal-1',
-        user_id: 'local-user',
-        title: 'Study 2 hours daily',
-        description: 'Prepare for exams',
-        target: 100,
-        current_value: 65,
-        deadline: null,
-        priority: 'high',
-        completed: false,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-      setLocal(STORAGE_KEYS.goals, [defaultGoal])
-      return [defaultGoal]
-    }
     return local
   },
 
@@ -973,7 +1005,9 @@ export const habitService = {
       const { data: habits, error: habitsErr } = await supabase.from('habits').select('*')
       const { data: logs } = await supabase.from('habit_logs').select('*').eq('log_date', today)
 
-      if (!habitsErr && habits) {
+      if (!habitsErr && habits !== null) {
+        setLocal(STORAGE_KEYS.habits, habits as Habit[])
+        if (logs) setLocal(STORAGE_KEYS.habitLogs, logs as HabitLog[])
         return habits.map((h) => {
           const log = logs?.find((l) => l.habit_id === h.id)
           return {
@@ -987,20 +1021,10 @@ export const habitService = {
       // Fallback
     }
 
+    if (isSupabaseConfigured) return []
+
     const localHabits = getLocal<Habit>(STORAGE_KEYS.habits)
     const localLogs = getLocal<HabitLog>(STORAGE_KEYS.habitLogs)
-
-    if (localHabits.length === 0) {
-      // Default starting habits
-      const defaultHabits: Habit[] = [
-        { id: 'habit-1', user_id: 'local-user', name: 'Drink 2L Water', description: 'Stay hydrated', frequency: 'daily', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-        { id: 'habit-2', user_id: 'local-user', name: 'Biometric Attendance', description: 'At hostel reception', frequency: 'daily', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-        { id: 'habit-3', user_id: 'local-user', name: 'Exercise 30 mins', description: 'Gym or jog', frequency: 'daily', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
-      ]
-      setLocal(STORAGE_KEYS.habits, defaultHabits)
-      return defaultHabits.map((h) => ({ ...h, todayCompleted: false }))
-    }
-
     return localHabits.map((h) => {
       const log = localLogs.find((l) => l.habit_id === h.id && l.log_date === today)
       return {
@@ -1090,7 +1114,10 @@ export const noteService = {
   async getNotes(): Promise<Note[]> {
     try {
       const { data, error } = await supabase.from('notes').select('*').order('created_at', { ascending: false })
-      if (!error && data && data.length > 0) return data as Note[]
+      if (!error && data !== null) {
+        setLocal(STORAGE_KEYS.notes, data as Note[])
+        return data as Note[]
+      }
     } catch {
       // Fallback
     }
@@ -1151,3 +1178,156 @@ export const noteService = {
     )
   },
 }
+
+// =====================================
+// LOCAL DATA SYNC & CLEANUP HELPERS
+// =====================================
+export async function syncLocalDataToCloud(userId: string): Promise<void> {
+  if (!isSupabaseConfigured || !userId) return
+
+  try {
+    // 1. Sync People
+    const localPeople = getLocal<Person>('ht_people').filter((p) => p.user_id === 'local-user' && !p.id.startsWith('p'))
+    for (const p of localPeople) {
+      await supabase.from('people').insert({
+        user_id: userId,
+        name: p.name,
+        phone: p.phone || null,
+        notes: p.notes || null,
+      })
+    }
+
+    // 2. Sync Reminders
+    const localReminders = getLocal<Reminder>(STORAGE_KEYS.reminders).filter((r) => r.user_id === 'local-user')
+    for (const r of localReminders) {
+      await supabase.from('reminders').insert({
+        user_id: userId,
+        title: r.title,
+        description: r.description || null,
+        reminder_date: r.reminder_date,
+        reminder_time: r.reminder_time,
+        repeat_type: r.repeat_type,
+        priority: r.priority,
+        completed: r.completed,
+      })
+    }
+
+    // 3. Sync Activities
+    const localActivities = getLocal<Activity>(STORAGE_KEYS.activities).filter((a) => a.user_id === 'local-user')
+    for (const a of localActivities) {
+      await supabase.from('activities').insert({
+        user_id: userId,
+        title: a.title,
+        description: a.description || null,
+        category: a.category,
+        activity_date: a.activity_date,
+        start_time: a.start_time || null,
+        end_time: a.end_time || null,
+        status: a.status,
+      })
+    }
+
+    // 4. Sync Transactions
+    const localTransactions = getLocal<Transaction>(STORAGE_KEYS.transactions).filter((t) => t.user_id === 'local-user')
+    for (const t of localTransactions) {
+      await supabase.from('transactions').insert({
+        user_id: userId,
+        type: t.type,
+        amount: t.amount,
+        category: t.category,
+        description: t.description || null,
+        payment_method: t.payment_method,
+        person_name: t.person_name || null,
+        expected_return_date: t.expected_return_date || null,
+        purpose: t.purpose || null,
+        transaction_date: t.transaction_date,
+        status: t.status,
+      })
+    }
+
+    // 5. Sync Goals
+    const localGoals = getLocal<Goal>(STORAGE_KEYS.goals).filter((g) => g.user_id === 'local-user' && g.id !== 'default-goal-1')
+    for (const g of localGoals) {
+      await supabase.from('goals').insert({
+        user_id: userId,
+        title: g.title,
+        description: g.description || null,
+        target: g.target,
+        current_value: g.current_value,
+        deadline: g.deadline || null,
+        priority: g.priority,
+        completed: g.completed,
+      })
+    }
+
+    // 6. Sync Habits
+    const localHabits = getLocal<Habit>(STORAGE_KEYS.habits).filter((h) => h.user_id === 'local-user' && !h.id.startsWith('habit-'))
+    for (const h of localHabits) {
+      await supabase.from('habits').insert({
+        user_id: userId,
+        name: h.name,
+        description: h.description || null,
+        frequency: h.frequency,
+      })
+    }
+
+    // 7. Sync Notes
+    const localNotes = getLocal<Note>(STORAGE_KEYS.notes).filter((n) => n.user_id === 'local-user')
+    for (const n of localNotes) {
+      await supabase.from('notes').insert({
+        user_id: userId,
+        title: n.title,
+        content: n.content,
+        tags: n.tags || [],
+      })
+    }
+
+    // Clear un-synced local user items so local state stays clean
+    clearLocalUserStorage()
+  } catch (err) {
+    console.warn('syncLocalDataToCloud error:', err)
+  }
+}
+
+export function clearLocalUserStorage(): void {
+  try {
+    Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key))
+    localStorage.removeItem('ht_people')
+  } catch {
+    // Ignore
+  }
+}
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+export function subscribeToRealtime(onDataChange: (table?: string) => void): () => void {
+  if (!isSupabaseConfigured) return () => {}
+
+  try {
+    const channelId = `realtime-db-${Math.random().toString(36).substring(2, 7)}`
+    const channel = supabase
+      .channel(channelId)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public' },
+        (payload) => {
+          // Ignore updates to profiles table to prevent Auth loop
+          if (payload.table === 'profiles') return
+
+          if (debounceTimer) clearTimeout(debounceTimer)
+          debounceTimer = setTimeout(() => {
+            onDataChange(payload.table)
+          }, 1000)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  } catch (err) {
+    console.warn('Realtime subscription error:', err)
+    return () => {}
+  }
+}
+

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
 import { EditReminderModal } from '@/components/ui/EditReminderModal'
-import { reminderService } from '@/services/dbServices'
+import { reminderService, subscribeToRealtime } from '@/services/dbServices'
 import type { Reminder } from '@/types'
 import { Plus, Clock, Trash2, Pencil } from 'lucide-react'
 import { cn } from '@/utils/cn'
@@ -24,7 +24,11 @@ export default function RemindersPage() {
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+    const unsubscribe = subscribeToRealtime(() => {
+      loadData()
+    })
+    return () => unsubscribe()
+  }, [])
 
   const handleToggle = async (id: string, currentVal: boolean) => {
     const newVal = !currentVal

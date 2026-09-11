@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
-import { X, Calendar } from 'lucide-react'
+import { X, Calendar, Download, FileText, Table } from 'lucide-react'
 import { attendanceService, checkAttendanceWindow } from '@/services/dbServices'
 import type { Attendance } from '@/types'
 import { cn } from '@/utils/cn'
+import { showToast } from '@/components/ui/Toast'
+import {
+  downloadReportImage,
+  downloadReportPDF,
+  downloadReportCSV,
+} from '@/services/reportExportService'
 
 interface AttendanceHistoryModalProps {
   isOpen: boolean
@@ -31,6 +37,114 @@ export function AttendanceHistoryModal({ isOpen, onClose }: AttendanceHistoryMod
     } finally {
       setLoading(false)
     }
+  }
+
+  // Export handlers
+  const handleDownloadImage = async () => {
+    try {
+      const kpis = [
+        { label: 'Overall Rate', value: `${attendancePercentage}%`, color: '#f59e0b' },
+        { label: 'Total Logged', value: `${totalDays} Days`, color: '#38bdf8' },
+        { label: 'Present / Late', value: `${presentCount + lateCount}`, color: '#4ade80' },
+        { label: 'Absent', value: `${absentCount}`, color: '#f43f5e' },
+      ]
+
+      const items = filteredHistory.slice(0, 15).map((a) => ({
+        col1: a.attendance_date,
+        col2: `Status: ${a.status.toUpperCase()}${a.reason ? ` (${a.reason})` : ''}`,
+        col3:
+          a.status === 'present'
+            ? '🖐️ PRESENT'
+            : a.status === 'late'
+            ? '⏰ LATE'
+            : a.status === 'pending'
+            ? '⏳ PENDING'
+            : '❌ ABSENT',
+        badgeColor:
+          a.status === 'present'
+            ? '#4ade80'
+            : a.status === 'late'
+            ? '#f59e0b'
+            : a.status === 'pending'
+            ? '#38bdf8'
+            : '#f43f5e',
+      }))
+
+      const periodLabel = `${daysRange} Days History`
+
+      await downloadReportImage(
+        'ATTENDANCE & BIOMETRIC REPORT',
+        'Daily Hostel Attendance Summary Log',
+        'User Attendance',
+        periodLabel,
+        kpis,
+        items,
+        {
+          text: `Overall Attendance Consistency: ${attendancePercentage}%`,
+          isPositive: attendancePercentage >= 80,
+          isNegative: attendancePercentage < 75,
+        },
+        `Attendance_Report_${daysRange}_Days.png`
+      )
+
+      showToast.success('Downloaded Attendance Report Card (PNG)! 📥')
+    } catch (err) {
+      console.error(err)
+      showToast.error('Failed to generate attendance report image')
+    }
+  }
+
+  const handleDownloadPDF = () => {
+    try {
+      const kpis = [
+        { label: 'Attendance Rate', value: `${attendancePercentage}%` },
+        { label: 'Total Days', value: `${totalDays}` },
+        { label: 'Present', value: `${presentCount}` },
+        { label: 'Absent', value: `${absentCount}` },
+      ]
+
+      const headers = ['Date', 'Status', 'Check In', 'Check Out', 'Reason / Note']
+      const rows = filteredHistory.map((a) => [
+        a.attendance_date,
+        a.status.toUpperCase(),
+        a.check_in ? new Date(a.check_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--',
+        a.check_out ? new Date(a.check_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--',
+        a.reason || '-',
+      ])
+
+      downloadReportPDF(
+        'ATTENDANCE LOG STATEMENT',
+        'User Attendance',
+        `${daysRange} Days Range`,
+        kpis,
+        headers,
+        rows,
+        `Overall Attendance Rate: ${attendancePercentage}%`,
+        `Attendance_Statement_${daysRange}_Days.pdf`
+      )
+    } catch (err) {
+      showToast.error('Failed to generate PDF statement')
+    }
+  }
+
+  const handleDownloadCSV = () => {
+    if (filteredHistory.length === 0) {
+      showToast.error('No attendance records to export')
+      return
+    }
+
+    const headers = ['Date', 'Status', 'Check In', 'Check Out', 'Source', 'Reason']
+    const rows = filteredHistory.map((a) => [
+      a.attendance_date,
+      a.status,
+      a.check_in || '',
+      a.check_out || '',
+      a.source || 'manual',
+      a.reason || '',
+    ])
+
+    downloadReportCSV(headers, rows, `attendance_log_${daysRange}_days.csv`)
+    showToast.success('Exported Attendance Log as CSV! 📊')
   }
 
   if (!isOpen) return null
@@ -75,12 +189,41 @@ export function AttendanceHistoryModal({ isOpen, onClose }: AttendanceHistoryMod
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface-100 dark:bg-surface-800 text-surface-500 hover:text-surface-900 dark:hover:text-white transition-all"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={handleDownloadImage}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-primary-600/20 transition-all cursor-pointer"
+                title="Download Attendance Report Card as PNG image"
+              >
+                <Download size={13} />
+                <span>PNG Image</span>
+              </button>
+              <button
+                onClick={handleDownloadPDF}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-surface-800 hover:bg-surface-900 text-white text-xs font-bold shadow-sm transition-all cursor-pointer"
+                title="Download Attendance PDF Statement"
+              >
+                <FileText size={13} />
+                <span>PDF</span>
+              </button>
+              <button
+                onClick={handleDownloadCSV}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                title="Export Attendance CSV Spreadsheet"
+              >
+                <Table size={13} />
+                <span>CSV</span>
+              </button>
+            </div>
+
+            <button
+              onClick={onClose}
+              className="flex h-9 w-9 items-center justify-center rounded-xl bg-surface-100 dark:bg-surface-800 text-surface-500 hover:text-surface-900 dark:hover:text-white transition-all ml-1"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}

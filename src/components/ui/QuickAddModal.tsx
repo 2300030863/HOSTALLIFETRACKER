@@ -548,7 +548,7 @@ export function QuickAddModal({
           {activeTab === 'attendance' && (
             <div className="space-y-4 text-center py-4">
               <p className="text-sm text-surface-600 dark:text-surface-400">
-                Mark your daily hostel biometric or class attendance for today.
+                Submit today's attendance to Supabase (Window: 9:00 PM → 10:30 PM). Notifications stop once confirmed by database.
               </p>
               <div className="grid grid-cols-3 gap-3">
                 {[

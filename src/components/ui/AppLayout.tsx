@@ -17,10 +17,13 @@ import {
   Menu,
   X,
   ChevronRight,
+  User,
+  Sparkles,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { QuickAddModal } from './QuickAddModal'
 import { NotificationSettingsModal } from './NotificationSettingsModal'
+import { UserProfileModal } from './UserProfileModal'
 import { useReminderScheduler } from '@/hooks/useReminderScheduler'
 
 interface AppLayoutProps {
@@ -40,6 +43,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
   const location = useLocation()
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
   const [isNotificationModalOpen, setIsNotificationModalOpen] = useState(false)
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false)
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false)
   const [quickAddTab, setQuickAddTab] = useState<
     'money' | 'attendance' | 'activity' | 'reminder' | 'goal' | 'note'
@@ -75,6 +79,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
     { path: '/reminders', label: 'Reminders', icon: <Bell size={16} /> },
     { path: '/goals', label: 'Goals', icon: <Target size={16} /> },
     { path: '/reports', label: 'Reports', icon: <BarChart3 size={16} /> },
+    { path: '/welcome', label: 'Welcome 🚀', icon: <Sparkles size={16} /> },
   ]
 
   const isMoreRoute = ['/people', '/activities', '/goals', '/reports'].includes(
@@ -111,34 +116,51 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
             </div>
           </Link>
 
-          {/* Right Header Actions (Desktop/Tablet Only to avoid duplicates on Mobile Phone) */}
-          <div className="hidden md:flex items-center gap-1.5 shrink-0">
-            {/* Notification Settings Toggle */}
+          {/* Right Header Actions */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* User Profile Badge */}
             <button
-              onClick={() => setIsNotificationModalOpen(true)}
-              className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-300 transition-all cursor-pointer border-0 outline-none"
-              title="Notification Settings"
+              onClick={() => setIsProfileModalOpen(true)}
+              className="flex items-center gap-2 py-1 px-2.5 rounded-xl bg-surface-100/80 dark:bg-surface-800/80 hover:bg-surface-200/80 dark:hover:bg-surface-700/80 text-surface-800 dark:text-surface-200 transition-all cursor-pointer border-0 outline-none"
+              title="View Profile Details"
             >
-              <Bell size={18} />
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-tr from-primary-600 to-indigo-600 text-white font-bold text-xs uppercase shadow-sm">
+                {displayName.charAt(0)}
+              </div>
+              <div className="text-left hidden sm:block max-w-[130px] truncate">
+                <div className="text-xs font-bold truncate leading-tight">{displayName}</div>
+                <div className="text-[10px] text-surface-500 dark:text-surface-400 truncate leading-tight">{user?.email}</div>
+              </div>
             </button>
 
-            {/* Dark/Light mode toggle */}
-            <button
-              onClick={() => setIsDark(!isDark)}
-              className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-300 transition-all cursor-pointer border-0 outline-none"
-              title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            >
-              {isDark ? <Sun size={18} className="text-amber-400" /> : <Moon size={18} />}
-            </button>
+            <div className="hidden md:flex items-center gap-1.5">
+              {/* Notification Settings Toggle */}
+              <button
+                onClick={() => setIsNotificationModalOpen(true)}
+                className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-300 transition-all cursor-pointer border-0 outline-none"
+                title="Notification Settings"
+              >
+                <Bell size={18} />
+              </button>
 
-            {/* Sign Out */}
-            <button
-              onClick={signOut}
-              className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:text-surface-400 dark:hover:text-rose-400 transition-all cursor-pointer border-0 outline-none"
-              title="Sign Out"
-            >
-              <LogOut size={18} />
-            </button>
+              {/* Dark/Light mode toggle */}
+              <button
+                onClick={() => setIsDark(!isDark)}
+                className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800 dark:text-surface-300 transition-all cursor-pointer border-0 outline-none"
+                title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              >
+                {isDark ? <Sun size={18} className="text-amber-400" /> : <Moon size={18} />}
+              </button>
+
+              {/* Sign Out */}
+              <button
+                onClick={signOut}
+                className="flex h-9.5 w-9.5 items-center justify-center rounded-xl text-surface-500 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:text-surface-400 dark:hover:text-rose-400 transition-all cursor-pointer border-0 outline-none"
+                title="Sign Out"
+              >
+                <LogOut size={18} />
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -352,6 +374,17 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
               <button
                 onClick={() => {
                   setIsMoreMenuOpen(false)
+                  setIsProfileModalOpen(true)
+                }}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-950/40"
+              >
+                <User size={16} />
+                <span>My Profile</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsMoreMenuOpen(false)
                   setIsNotificationModalOpen(true)
                 }}
                 className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-surface-600 dark:text-surface-300 hover:bg-surface-100 dark:hover:bg-surface-800"
@@ -396,6 +429,11 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
       <NotificationSettingsModal
         isOpen={isNotificationModalOpen}
         onClose={() => setIsNotificationModalOpen(false)}
+      />
+      {/* User Profile Modal */}
+      <UserProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
       />
     </div>
   )

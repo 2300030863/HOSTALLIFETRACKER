@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
-import { peopleService, transactionService } from '@/services/dbServices'
+import { peopleService, transactionService, subscribeToRealtime } from '@/services/dbServices'
 import type { Person, Transaction } from '@/types'
 import { Phone, UserPlus, X, Pencil, Trash2 } from 'lucide-react'
 import { showToast } from '@/components/ui/Toast'
 import { EditPersonModal } from '@/components/ui/EditPersonModal'
+import { PersonDetailsModal } from '@/components/ui/PersonDetailsModal'
+import { Eye } from 'lucide-react'
 
 interface PersonBalance {
   person: Person
@@ -16,6 +18,9 @@ interface PersonBalance {
 export default function PeoplePage() {
   const [people, setPeople] = useState<Person[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
+
+  // Details Modal state
+  const [selectedPersonDetails, setSelectedPersonDetails] = useState<Person | null>(null)
 
   // Add Person Modal state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
@@ -52,7 +57,11 @@ export default function PeoplePage() {
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+    const unsubscribe = subscribeToRealtime(() => {
+      loadData()
+    })
+    return () => unsubscribe()
+  }, [])
 
   const handleAddPerson = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -94,12 +103,14 @@ export default function PeoplePage() {
     }
   }
 
-  // Calculate balances per person
+  // Calculate balances per person (check person_id, person_name, and description)
   const balances: PersonBalance[] = people.map((p) => {
+    const targetName = p.name.toLowerCase().trim()
     const personTxs = transactions.filter(
       (t) =>
         t.person_id === p.id ||
-        (t.person_name && t.person_name.toLowerCase() === p.name.toLowerCase())
+        (t.person_name && t.person_name.toLowerCase().trim() === targetName) ||
+        (t.description && t.description.toLowerCase().includes(targetName))
     )
 
     const given = personTxs
@@ -234,6 +245,14 @@ export default function PeoplePage() {
                       )}
                     </div>
 
+                    <button
+                      onClick={() => setSelectedPersonDetails(person)}
+                      className="px-3 py-1.5 rounded-xl bg-primary-50 text-primary-700 dark:bg-primary-950/50 dark:text-primary-300 hover:bg-primary-100 text-xs font-bold transition-all shrink-0 cursor-pointer flex items-center gap-1 border border-primary-200 dark:border-primary-900/40"
+                    >
+                      <Eye size={13} />
+                      <span>View Details & Report 📊</span>
+                    </button>
+
                     {net !== 0 && (
                       <button
                         onClick={() => handleSettleUp(person.name, net)}
@@ -266,6 +285,14 @@ export default function PeoplePage() {
           )}
         </div>
       </div>
+
+      <PersonDetailsModal
+        isOpen={Boolean(selectedPersonDetails)}
+        person={selectedPersonDetails}
+        transactions={transactions}
+        onClose={() => setSelectedPersonDetails(null)}
+        onSettleUp={handleSettleUp}
+      />
 
       <EditPersonModal
         person={editingPerson}

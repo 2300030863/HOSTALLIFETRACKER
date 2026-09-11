@@ -5,6 +5,7 @@ import { ToastContainer } from '@/components/ui/Toast'
 import { Loader2 } from 'lucide-react'
 
 // Lazy load pages
+const WelcomePage = lazy(() => import('@/pages/WelcomePage'))
 const Login = lazy(() => import('@/pages/Login'))
 const Register = lazy(() => import('@/pages/Register'))
 const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
@@ -29,12 +30,12 @@ function PageLoader() {
   )
 }
 
-// Redirect authenticated users away from auth pages
+// Redirect authenticated users away from auth pages to dashboard
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, initialized } = useAuth()
 
   if (!initialized || loading) return <PageLoader />
-  if (user) return <Navigate to="/" replace />
+  if (user) return <Navigate to="/today" replace />
 
   return <>{children}</>
 }
@@ -53,14 +54,18 @@ function AppRoutes() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Routes>
+        {/* Primary Root Route: Show Welcome Page First */}
+        <Route path="/" element={<WelcomePage />} />
+        <Route path="/welcome" element={<WelcomePage />} />
+
         {/* Public auth routes */}
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
         <Route path="/forgot-password" element={<PublicRoute><ForgotPassword /></PublicRoute>} />
         <Route path="/reset-password" element={<ResetPassword />} />
 
-        {/* Protected routes */}
-        <Route path="/" element={<PrivateRoute><Today /></PrivateRoute>} />
+        {/* Protected app dashboard routes */}
+        <Route path="/today" element={<PrivateRoute><Today /></PrivateRoute>} />
         <Route path="/money" element={<PrivateRoute><MoneyPage /></PrivateRoute>} />
         <Route path="/people" element={<PrivateRoute><PeoplePage /></PrivateRoute>} />
         <Route path="/activities" element={<PrivateRoute><ActivitiesPage /></PrivateRoute>} />

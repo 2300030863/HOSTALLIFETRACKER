@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
-import { activityService } from '@/services/dbServices'
+import { activityService, subscribeToRealtime } from '@/services/dbServices'
 import type { Activity } from '@/types'
 import { Plus, CheckCircle2, Trash2, Pencil } from 'lucide-react'
 import { cn } from '@/utils/cn'
@@ -24,7 +24,11 @@ export default function ActivitiesPage() {
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+    const unsubscribe = subscribeToRealtime(() => {
+      loadData()
+    })
+    return () => unsubscribe()
+  }, [])
 
   const handleToggle = async (id: string, currentStatus: string) => {
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed'

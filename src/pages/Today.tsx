@@ -15,14 +15,17 @@ import { QuickAddModal } from '@/components/ui/QuickAddModal'
 import { showToast } from '@/components/ui/Toast'
 import {
   attendanceService,
+  checkAttendanceWindow,
   reminderService,
   activityService,
   transactionService,
   goalService,
   habitService,
+  subscribeToRealtime,
 } from '@/services/dbServices'
 import type {
   Attendance,
+  AttendanceStatus,
   Reminder,
   Activity,
   Transaction,
@@ -36,6 +39,9 @@ import { AbsentReasonModal } from '@/components/ui/AbsentReasonModal'
 export default function Today() {
   const [loading, setLoading] = useState(true)
   const [attendance, setAttendance] = useState<Attendance | null>(null)
+  const [selectedStatus, setSelectedStatus] = useState<AttendanceStatus | null>(null)
+  const [isEditingAttendance, setIsEditingAttendance] = useState(false)
+  const [isSubmittingAttendance, setIsSubmittingAttendance] = useState(false)
   const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false)
   const [isAbsentModalOpen, setIsAbsentModalOpen] = useState(false)
   const [reminders, setReminders] = useState<Reminder[]>([])
@@ -61,6 +67,11 @@ export default function Today() {
       ])
 
       setAttendance(attData)
+      if (attData) {
+        setSelectedStatus(attData.status)
+      } else {
+        setSelectedStatus(null)
+      }
       setReminders(remData)
       setActivities(actData)
       setTransactions(txData)
@@ -75,7 +86,11 @@ export default function Today() {
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+    const unsubscribe = subscribeToRealtime(() => {
+      loadData()
+    })
+    return () => unsubscribe()
+  }, [])
 
   const handleOpenQuickAdd = (tab: 'money' | 'attendance' | 'activity' | 'reminder' | 'goal' | 'note') => {
     setQuickAddTab(tab)
@@ -83,27 +98,43 @@ export default function Today() {
   }
 
   // Attendance handlers
-  const handleMarkAttendance = async (status: 'present' | 'late' | 'absent') => {
+  const handleSelectOption = (status: AttendanceStatus) => {
+    if (attendance && !isEditingAttendance) {
+      showToast.info('Click "Edit Attendance ✏️" to modify your submitted attendance.')
+      return
+    }
+    setSelectedStatus(status)
+  }
+
+  const handleSubmitAttendance = async (statusOverride?: AttendanceStatus, reason?: string) => {
+    const targetStatus = statusOverride || selectedStatus
+    if (!targetStatus) {
+      showToast.error('Please select Present, Late, or Absent before submitting!')
+      return
+    }
+
+    setIsSubmittingAttendance(true)
     try {
-      const updated = await attendanceService.markAttendance(status)
+      const updated = await attendanceService.markAttendance(targetStatus, reason)
       setAttendance(updated)
-      showToast.success(`Attendance marked as ${status.toUpperCase()} 🖐️`)
+      setSelectedStatus(updated.status)
+      setIsEditingAttendance(false)
+      showToast.success(
+        `Attendance saved to Supabase as ${updated.status.toUpperCase()}! 🖐️ Notifications stopped.`
+      )
     } catch (err: any) {
-      showToast.error(err.message || 'Failed to mark attendance')
-      // Refresh today's attendance to pick up auto-ABSENT status if window closed
-      const updated = await attendanceService.getTodayAttendance()
-      setAttendance(updated)
+      showToast.error(err.message || 'Database error: Could not save attendance to Supabase.')
+    } finally {
+      setIsSubmittingAttendance(false)
     }
   }
 
   const handleConfirmAbsent = async (reason: string) => {
-    try {
-      const updated = await attendanceService.markAttendance('absent', reason)
-      setAttendance(updated)
-      showToast.success(`Attendance marked as ABSENT: ${reason} ❌`)
-    } catch (err: any) {
-      showToast.error(err.message || 'Failed to mark attendance')
-    }
+    await handleSubmitAttendance('absent', reason)
+  }
+
+  const handleEnableEdit = () => {
+    setIsEditingAttendance(true)
   }
 
   const handleCheckOut = async () => {
@@ -203,8 +234,8 @@ export default function Today() {
                 </h3>
                 <p className="text-xs text-surface-500">
                   {attendance
-                    ? `Marked as ${attendance.status.toUpperCase()}${attendance.reason ? ` (${attendance.reason})` : attendance.check_in ? ` (${format(new Date(attendance.check_in), 'hh:mm a')})` : ''}`
-                    : 'Not marked today • Biometric Present: 9:00 PM → 10:30 PM (Mark Absent available 24/7)'}
+                    ? `Saved to Supabase as ${attendance.status.toUpperCase()}${attendance.reason ? ` (${attendance.reason})` : attendance.check_in ? ` (${format(new Date(attendance.check_in), 'hh:mm a')})` : ''}`
+                    : checkAttendanceWindow().statusMessage + ' • Window: 9:00 PM → 10:30 PM'}
                 </p>
               </div>
             </div>
@@ -229,6 +260,26 @@ export default function Today() {
                 </span>
               )}
 
+              {/* Edit Attendance Button */}
+              {attendance && !isEditingAttendance && (
+                <button
+                  onClick={handleEnableEdit}
+                  className="px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 text-xs font-bold transition-all border border-indigo-200 dark:border-indigo-800"
+                  title="Edit submitted attendance"
+                >
+                  Edit Attendance ✏️
+                </button>
+              )}
+
+              {attendance && !attendance.check_out && (
+                <button
+                  onClick={handleCheckOut}
+                  className="px-3 py-1 rounded-xl bg-surface-800 text-white dark:bg-surface-700 hover:bg-surface-900 text-xs font-bold transition-all flex items-center gap-1"
+                >
+                  <span>Check Out 🚪</span>
+                </button>
+              )}
+
               <button
                 onClick={() => setIsAttendanceModalOpen(true)}
                 className="px-2.5 py-1 rounded-xl bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white text-xs font-bold transition-all border border-surface-200 dark:border-surface-700"
@@ -239,51 +290,88 @@ export default function Today() {
             </div>
           </div>
 
-          {/* Attendance Action Buttons */}
-          <div className="flex flex-wrap gap-2 pt-2 border-t border-surface-100 dark:border-surface-800/80">
-            <button
-              onClick={() => handleMarkAttendance('present')}
-              className={cn(
-                'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
-                attendance?.status === 'present'
-                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
-                  : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300'
-              )}
-            >
-              <span>Mark Present 🖐️</span>
-            </button>
-
-            <button
-              onClick={() => handleMarkAttendance('late')}
-              className={cn(
-                'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
-                attendance?.status === 'late'
-                  ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
-                  : 'bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300'
-              )}
-            >
-              <span>Mark Late ⏰</span>
-            </button>
-
-            <button
-              onClick={() => setIsAbsentModalOpen(true)}
-              className={cn(
-                'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
-                attendance?.status === 'absent'
-                  ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
-                  : 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300'
-              )}
-            >
-              <span>Mark Absent ❌</span>
-            </button>
-
-            {attendance && !attendance.check_out && (
+          {/* Attendance Options Selection Buttons */}
+          <div className="space-y-3 pt-2 border-t border-surface-100 dark:border-surface-800/80">
+            <div className="flex flex-wrap gap-2">
               <button
-                onClick={handleCheckOut}
-                className="py-2.5 px-4 rounded-xl text-xs font-bold bg-surface-800 text-white dark:bg-surface-700 hover:bg-surface-900 transition-all flex items-center gap-1"
+                type="button"
+                onClick={() => handleSelectOption('present')}
+                disabled={attendance !== null && !isEditingAttendance}
+                className={cn(
+                  'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
+                  selectedStatus === 'present'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                    : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300',
+                  attendance !== null && !isEditingAttendance && 'opacity-60 cursor-not-allowed'
+                )}
               >
-                <span>Check Out 🚪</span>
+                <span>Present 🖐️</span>
               </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectOption('late')}
+                disabled={attendance !== null && !isEditingAttendance}
+                className={cn(
+                  'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
+                  selectedStatus === 'late'
+                    ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
+                    : 'bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300',
+                  attendance !== null && !isEditingAttendance && 'opacity-60 cursor-not-allowed'
+                )}
+              >
+                <span>Late ⏰</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (attendance && !isEditingAttendance) {
+                    handleSelectOption('absent')
+                  } else {
+                    setIsAbsentModalOpen(true)
+                  }
+                }}
+                disabled={attendance !== null && !isEditingAttendance}
+                className={cn(
+                  'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
+                  selectedStatus === 'absent'
+                    ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
+                    : 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300',
+                  attendance !== null && !isEditingAttendance && 'opacity-60 cursor-not-allowed'
+                )}
+              >
+                <span>Absent ❌</span>
+              </button>
+            </div>
+
+            {/* Explicit Submit Button for Attendance */}
+            {(!attendance || isEditingAttendance) && selectedStatus && (
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleSubmitAttendance()}
+                  disabled={isSubmittingAttendance}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-primary-600/20 transition-all flex items-center justify-center gap-2"
+                >
+                  <RefreshCw size={14} className={cn(isSubmittingAttendance && 'animate-spin')} />
+                  <span>
+                    {isEditingAttendance ? 'Save Modification to Supabase 💾' : 'Submit Attendance to Supabase 🖐️'}
+                  </span>
+                </button>
+                {isEditingAttendance && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingAttendance(false)
+                      if (attendance) setSelectedStatus(attendance.status)
+                    }}
+                    className="py-2.5 px-3 rounded-xl bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300 text-xs font-bold hover:bg-surface-200"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

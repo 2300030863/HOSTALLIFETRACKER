@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
-import { transactionService } from '@/services/dbServices'
+import { transactionService, subscribeToRealtime } from '@/services/dbServices'
 import type { Transaction } from '@/types'
 import {
   Plus,
@@ -41,7 +41,11 @@ export default function MoneyPage() {
 
   useEffect(() => {
     loadData()
-  }, [loadData])
+    const unsubscribe = subscribeToRealtime(() => {
+      loadData()
+    })
+    return () => unsubscribe()
+  }, [])
 
   const handleDelete = async (id: string) => {
     await transactionService.deleteTransaction(id)
