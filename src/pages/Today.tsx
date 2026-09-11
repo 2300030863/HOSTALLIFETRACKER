@@ -223,69 +223,71 @@ export default function Today() {
 
         {/* 1. ATTENDANCE CARD */}
         <div className="rounded-3xl bg-white dark:bg-surface-900 border border-surface-200/80 dark:border-surface-800 p-5 shadow-sm hover:shadow-md transition-all">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400 text-xl font-bold">
+          <div className="flex flex-col gap-3 mb-4">
+            {/* Row 1: icon + title + status badge */}
+            <div className="flex items-start gap-3">
+              <div className="flex-shrink-0 flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400 text-xl font-bold">
                 🖐️
               </div>
-              <div>
-                <h3 className="font-bold text-base text-surface-900 dark:text-white">
-                  Attendance & Biometric
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-base text-surface-900 dark:text-white leading-tight">
+                  Attendance &amp; Biometric
                 </h3>
-                <p className="text-xs text-surface-500">
+                <p className="text-xs text-surface-500 leading-snug mt-0.5">
                   {attendance
                     ? `Saved to Supabase as ${attendance.status.toUpperCase()}${attendance.reason ? ` (${attendance.reason})` : attendance.check_in ? ` (${format(new Date(attendance.check_in), 'hh:mm a')})` : ''}`
-                    : checkAttendanceWindow().statusMessage + ' • Window: 9:00 PM → 10:30 PM'}
+                    : checkAttendanceWindow().statusMessage + ' • Window: 9:00 PM ? 11:00 PM'}
                 </p>
+              </div>
+              <div className="flex-shrink-0">
+                {attendance ? (
+                  <span
+                    className={cn(
+                      'px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide',
+                      attendance.status === 'present'
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                        : attendance.status === 'late'
+                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                        : 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                    )}
+                  >
+                    {attendance.status}
+                  </span>
+                ) : (
+                  <span className="px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
+                    Pending
+                  </span>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {attendance ? (
-                <span
-                  className={cn(
-                    'px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide',
-                    attendance.status === 'present'
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                      : attendance.status === 'late'
-                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
-                      : 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
-                  )}
-                >
-                  {attendance.status}
-                </span>
-              ) : (
-                <span className="px-3 py-1 rounded-full text-xs font-extrabold uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300">
-                  ⏳ Pending
-                </span>
-              )}
-
-              {/* Edit Attendance Button */}
+            {/* Row 2: action buttons */}
+            <div className="flex flex-wrap gap-2">
               {attendance && !isEditingAttendance && (
                 <button
                   onClick={handleEnableEdit}
-                  className="px-3 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 text-xs font-bold transition-all border border-indigo-200 dark:border-indigo-800"
+                  className="flex-1 min-w-[120px] px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 text-xs font-bold transition-all border border-indigo-200 dark:border-indigo-800 text-center"
                   title="Edit submitted attendance"
                 >
-                  Edit Attendance ✏️
+                  Edit Attendance
                 </button>
               )}
 
               {attendance && !attendance.check_out && (
                 <button
                   onClick={handleCheckOut}
-                  className="px-3 py-1 rounded-xl bg-surface-800 text-white dark:bg-surface-700 hover:bg-surface-900 text-xs font-bold transition-all flex items-center gap-1"
+                  className="flex-1 min-w-[100px] px-3 py-1.5 rounded-xl bg-surface-800 text-white dark:bg-surface-700 hover:bg-surface-900 text-xs font-bold transition-all text-center"
                 >
-                  <span>Check Out 🚪</span>
+                  Check Out
                 </button>
               )}
 
               <button
                 onClick={() => setIsAttendanceModalOpen(true)}
-                className="px-2.5 py-1 rounded-xl bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white text-xs font-bold transition-all border border-surface-200 dark:border-surface-700"
-                title="View Attendance Report & History"
+                className="flex-1 min-w-[90px] px-3 py-1.5 rounded-xl bg-surface-100 dark:bg-surface-800 text-surface-600 dark:text-surface-300 hover:text-surface-900 dark:hover:text-white text-xs font-bold transition-all border border-surface-200 dark:border-surface-700 text-center"
+                title="View Attendance Report"
               >
-                View Log 👁️
+                View Log
               </button>
             </div>
           </div>
@@ -296,13 +298,13 @@ export default function Today() {
               <button
                 type="button"
                 onClick={() => handleSelectOption('present')}
-                disabled={attendance !== null && !isEditingAttendance}
+                disabled={attendance !== null && !isEditingAttendance || (!isEditingAttendance && !attendance && !checkAttendanceWindow().isOpen)}
                 className={cn(
                   'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
                   selectedStatus === 'present'
                     ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
                     : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300',
-                  attendance !== null && !isEditingAttendance && 'opacity-60 cursor-not-allowed'
+                  (attendance !== null && !isEditingAttendance || (!isEditingAttendance && !attendance && !checkAttendanceWindow().isOpen)) && 'opacity-40 cursor-not-allowed'
                 )}
               >
                 <span>Present 🖐️</span>
@@ -311,13 +313,13 @@ export default function Today() {
               <button
                 type="button"
                 onClick={() => handleSelectOption('late')}
-                disabled={attendance !== null && !isEditingAttendance}
+                disabled={attendance !== null && !isEditingAttendance || (!isEditingAttendance && !attendance && !checkAttendanceWindow().isOpen)}
                 className={cn(
                   'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
                   selectedStatus === 'late'
                     ? 'bg-amber-600 text-white shadow-md shadow-amber-600/20'
                     : 'bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/40 dark:text-amber-300',
-                  attendance !== null && !isEditingAttendance && 'opacity-60 cursor-not-allowed'
+                  (attendance !== null && !isEditingAttendance || (!isEditingAttendance && !attendance && !checkAttendanceWindow().isOpen)) && 'opacity-40 cursor-not-allowed'
                 )}
               >
                 <span>Late ⏰</span>
@@ -332,13 +334,13 @@ export default function Today() {
                     setIsAbsentModalOpen(true)
                   }
                 }}
-                disabled={attendance !== null && !isEditingAttendance}
+                disabled={attendance !== null && !isEditingAttendance || (!isEditingAttendance && !attendance && !checkAttendanceWindow().isOpen)}
                 className={cn(
                   'flex-1 py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all',
                   selectedStatus === 'absent'
                     ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
                     : 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-950/40 dark:text-rose-300',
-                  attendance !== null && !isEditingAttendance && 'opacity-60 cursor-not-allowed'
+                  (attendance !== null && !isEditingAttendance || (!isEditingAttendance && !attendance && !checkAttendanceWindow().isOpen)) && 'opacity-40 cursor-not-allowed'
                 )}
               >
                 <span>Absent ❌</span>

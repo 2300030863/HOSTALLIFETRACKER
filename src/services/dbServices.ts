@@ -88,7 +88,7 @@ export function checkAttendanceWindow(dateObj: Date = new Date()): AttendanceWin
   const currentTotalMinutes = hours * 60 + minutes
 
   const openMinutes = 21 * 60 // 9:00 PM
-  const closeMinutes = 22 * 60 + 30 // 10:30 PM
+  const closeMinutes = 23 * 60 // 11:00 PM
 
   const serverTimeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -107,7 +107,7 @@ export function checkAttendanceWindow(dateObj: Date = new Date()): AttendanceWin
       isOpen: false,
       isBeforeWindow: false,
       isAfterWindow: true,
-      statusMessage: "Today's attendance window closed at 10:30 PM",
+      statusMessage: "Today's attendance window closed at 11:00 PM",
       serverTimeStr,
     }
   }
@@ -116,7 +116,7 @@ export function checkAttendanceWindow(dateObj: Date = new Date()): AttendanceWin
     isOpen: true,
     isBeforeWindow: false,
     isAfterWindow: false,
-    statusMessage: 'Attendance Window Open (9:00 PM → 10:30 PM)',
+    statusMessage: 'Attendance Window Open (9:00 PM ? 11:00 PM)',
     serverTimeStr,
   }
 }
