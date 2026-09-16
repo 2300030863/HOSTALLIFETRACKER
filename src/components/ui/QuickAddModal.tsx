@@ -9,8 +9,6 @@ import {
   Target,
   FileText,
   Sparkles,
-  User,
-  UserPlus,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {

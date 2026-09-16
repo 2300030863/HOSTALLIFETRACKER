@@ -10,6 +10,7 @@ import type {
   ActivityCategory,
   Transaction,
   TransactionType,
+  TransactionStatus,
   PaymentMethod,
   Goal,
   Habit,
@@ -791,6 +792,7 @@ export const transactionService = {
     expected_return_date?: string
     purpose?: string
     transaction_date?: string
+    status?: TransactionStatus
   }): Promise<Transaction> {
     const today = getTodayStr()
     const itemData = {
@@ -804,7 +806,7 @@ export const transactionService = {
       expected_return_date: payload.expected_return_date || null,
       purpose: payload.purpose || null,
       transaction_date: payload.transaction_date || today,
-      status: 'completed' as const,
+      status: payload.status || 'completed',
     }
 
     // Always save locally first
