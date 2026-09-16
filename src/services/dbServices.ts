@@ -16,6 +16,8 @@ import type {
   HabitLog,
   Note,
   Person,
+  AppNotification,
+  NotificationType,
 } from '@/types'
 
 // Helper for local storage backup when offline / initial demo
@@ -1331,3 +1333,290 @@ export function subscribeToRealtime(onDataChange: (table?: string) => void): () 
   }
 }
 
+// =====================================
+// NOTIFICATION SERVICE
+// =====================================
+const OFFLINE_NOTIFICATION_QUEUE_KEY = 'ht_notification_queue'
+
+interface OfflineNotification {
+  type: NotificationType
+  title: string
+  message: string
+  scheduled_at: string
+  notification_key: string
+}
+
+function getOfflineQueue(): OfflineNotification[] {
+  try {
+    const data = localStorage.getItem(OFFLINE_NOTIFICATION_QUEUE_KEY)
+    return data ? JSON.parse(data) : []
+  } catch {
+    return []
+  }
+}
+
+function setOfflineQueue(items: OfflineNotification[]): void {
+  try {
+    localStorage.setItem(OFFLINE_NOTIFICATION_QUEUE_KEY, JSON.stringify(items))
+  } catch (e) {
+    console.error('Failed to save notification queue to localStorage', e)
+  }
+}
+
+export const notificationService = {
+  /**
+   * Create a notification record.
+   * Online: inserts directly into Supabase (uses notification_key for dedup).
+   * Offline: queues to localStorage for later sync.
+   * Returns the created notification or null if duplicate/offline.
+   */
+  async createNotification(
+    type: NotificationType,
+    title: string,
+    message: string,
+    scheduledAt: string,
+    notificationKey: string
+  ): Promise<AppNotification | null> {
+    // If offline, queue locally
+    if (!navigator.onLine) {
+      const queue = getOfflineQueue()
+      // Prevent local duplicates
+      if (!queue.some((n) => n.notification_key === notificationKey)) {
+        queue.push({ type, title, message, scheduled_at: scheduledAt, notification_key: notificationKey })
+        setOfflineQueue(queue)
+      }
+      return null
+    }
+
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData?.user) return null
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .upsert(
+          {
+            user_id: userData.user.id,
+            type,
+            title,
+            message,
+            scheduled_at: scheduledAt,
+            notification_key: notificationKey,
+            read: false,
+          },
+          { onConflict: 'user_id,notification_key', ignoreDuplicates: true }
+        )
+        .select()
+        .maybeSingle()
+
+      if (error) {
+        console.error('Failed to create notification:', error)
+        // Queue offline as fallback
+        const queue = getOfflineQueue()
+        if (!queue.some((n) => n.notification_key === notificationKey)) {
+          queue.push({ type, title, message, scheduled_at: scheduledAt, notification_key: notificationKey })
+          setOfflineQueue(queue)
+        }
+        return null
+      }
+
+      return data as AppNotification | null
+    } catch {
+      // Network error — queue locally
+      const queue = getOfflineQueue()
+      if (!queue.some((n) => n.notification_key === notificationKey)) {
+        queue.push({ type, title, message, scheduled_at: scheduledAt, notification_key: notificationKey })
+        setOfflineQueue(queue)
+      }
+      return null
+    }
+  },
+
+  /**
+   * Fetch all unread notifications for the current user, ordered by scheduled_at desc.
+   */
+  async getUnreadNotifications(): Promise<AppNotification[]> {
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData?.user) return []
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userData.user.id)
+        .eq('read', false)
+        .order('scheduled_at', { ascending: false })
+
+      if (error) {
+        console.error('Failed to fetch unread notifications:', error)
+        return []
+      }
+
+      return (data || []) as AppNotification[]
+    } catch {
+      return []
+    }
+  },
+
+  /**
+   * Fetch all notifications (read + unread) for the current user, limited to recent.
+   */
+  async getAllNotifications(limit = 50): Promise<AppNotification[]> {
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData?.user) return []
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userData.user.id)
+        .order('scheduled_at', { ascending: false })
+        .limit(limit)
+
+      if (error) {
+        console.error('Failed to fetch notifications:', error)
+        return []
+      }
+
+      return (data || []) as AppNotification[]
+    } catch {
+      return []
+    }
+  },
+
+  /**
+   * Get count of unread notifications.
+   */
+  async getUnreadCount(): Promise<number> {
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData?.user) return 0
+
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', userData.user.id)
+        .eq('read', false)
+
+      if (error) {
+        console.error('Failed to count unread notifications:', error)
+        return 0
+      }
+
+      return count || 0
+    } catch {
+      return 0
+    }
+  },
+
+  /**
+   * Mark a single notification as read.
+   */
+  async markAsRead(id: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('id', id)
+
+      if (error) console.error('Failed to mark notification as read:', error)
+    } catch (e) {
+      console.error('Failed to mark notification as read:', e)
+    }
+  },
+
+  /**
+   * Mark all unread notifications as read for the current user.
+   */
+  async markAllAsRead(): Promise<void> {
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData?.user) return
+
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('user_id', userData.user.id)
+        .eq('read', false)
+
+      if (error) console.error('Failed to mark all notifications as read:', error)
+    } catch (e) {
+      console.error('Failed to mark all notifications as read:', e)
+    }
+  },
+
+  /**
+   * Sync offline-queued notifications to Supabase.
+   * Returns the number of successfully synced notifications.
+   */
+  async syncOfflineNotifications(): Promise<number> {
+    const queue = getOfflineQueue()
+    if (queue.length === 0) return 0
+
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData?.user) return 0
+
+      const remaining: OfflineNotification[] = []
+      let syncedCount = 0
+
+      for (const item of queue) {
+        try {
+          const { error } = await supabase
+            .from('notifications')
+            .upsert(
+              {
+                user_id: userData.user.id,
+                type: item.type,
+                title: item.title,
+                message: item.message,
+                scheduled_at: item.scheduled_at,
+                notification_key: item.notification_key,
+                read: false,
+              },
+              { onConflict: 'user_id,notification_key', ignoreDuplicates: true }
+            )
+
+          if (error) {
+            console.error('Failed to sync notification:', error)
+            remaining.push(item)
+          } else {
+            syncedCount++
+          }
+        } catch {
+          remaining.push(item)
+        }
+      }
+
+      setOfflineQueue(remaining)
+      return syncedCount
+    } catch {
+      return 0
+    }
+  },
+
+  /**
+   * Delete read notifications older than 30 days.
+   * Called periodically to keep the database clean.
+   */
+  async cleanOldNotifications(): Promise<void> {
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (!userData?.user) return
+
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+
+      const { error } = await supabase
+        .from('notifications')
+        .delete()
+        .eq('user_id', userData.user.id)
+        .eq('read', true)
+        .lt('created_at', thirtyDaysAgo.toISOString())
+
+      if (error) console.error('Failed to clean old notifications:', error)
+    } catch (e) {
+      console.error('Failed to clean old notifications:', e)
+    }
+  },
+}

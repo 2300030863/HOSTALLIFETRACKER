@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import {
   X,
   Plus,
@@ -9,6 +9,8 @@ import {
   Target,
   FileText,
   Sparkles,
+  User,
+  UserPlus,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import {
@@ -18,9 +20,11 @@ import {
   reminderService,
   goalService,
   noteService,
+  peopleService,
 } from '@/services/dbServices'
 import { showToast } from './Toast'
 import { EXPENSE_CATEGORIES } from '@/types'
+import type { Person, Transaction } from '@/types'
 
 type QuickAddTab = 'money' | 'attendance' | 'activity' | 'reminder' | 'goal' | 'note'
 
@@ -30,6 +34,8 @@ interface QuickAddModalProps {
   onSuccess: () => void
   initialTab?: QuickAddTab
   initialMoneyType?: 'expense' | 'given' | 'received'
+  initialPersonId?: string
+  initialPersonName?: string
 }
 
 export function QuickAddModal({
@@ -38,6 +44,8 @@ export function QuickAddModal({
   onSuccess,
   initialTab = 'money',
   initialMoneyType = 'expense',
+  initialPersonId,
+  initialPersonName,
 }: QuickAddModalProps) {
   const [activeTab, setActiveTab] = useState<QuickAddTab>(initialTab)
   const [loading, setLoading] = useState(false)
@@ -50,8 +58,13 @@ export function QuickAddModal({
   const [paymentMethod, setPaymentMethod] = useState<'upi' | 'cash' | 'card'>('upi')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
 
-  // Money Given / Received specific fields
-  const [personName, setPersonName] = useState('')
+  // Money Given / Received specific fields & People integration
+  const [people, setPeople] = useState<Person[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [selectedPersonId, setSelectedPersonId] = useState<string>(initialPersonId || '')
+  const [personName, setPersonName] = useState(initialPersonName || '')
+  const [isAddingNewPerson, setIsAddingNewPerson] = useState<boolean>(false)
+  const [newPersonName, setNewPersonName] = useState<string>('')
   const [expectedReturnDate, setExpectedReturnDate] = useState('')
   const [purpose, setPurpose] = useState('')
 
@@ -81,6 +94,118 @@ export function QuickAddModal({
   const [noteTitle, setNoteTitle] = useState('')
   const [noteContent, setNoteContent] = useState('')
 
+  // Load People and Transactions when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      const loadPeopleAndTxs = async () => {
+        try {
+          const [peopleData, txData] = await Promise.all([
+            peopleService.getPeople(),
+            transactionService.getAllTransactions(),
+          ])
+          setPeople(peopleData)
+          setTransactions(txData)
+
+          if (initialPersonId) {
+            setSelectedPersonId(initialPersonId)
+            const matched = peopleData.find((p) => p.id === initialPersonId)
+            if (matched) setPersonName(matched.name)
+          } else if (initialPersonName) {
+            const matched = peopleData.find(
+              (p) => p.name.toLowerCase().trim() === initialPersonName.toLowerCase().trim()
+            )
+            if (matched) {
+              setSelectedPersonId(matched.id)
+              setPersonName(matched.name)
+            } else {
+              setPersonName(initialPersonName)
+            }
+          }
+        } catch (err) {
+          console.error('Failed to load people/transactions for QuickAddModal', err)
+        }
+      }
+      loadPeopleAndTxs()
+    }
+  }, [isOpen, initialPersonId, initialPersonName])
+
+  // Aggregate all unique person names from People table AND Money Given/Taken transactions
+  const personOptionsMap = new Map<string, { id?: string; name: string; phone?: string | null }>()
+
+  for (const p of people) {
+    const key = p.name.trim().toLowerCase()
+    if (key) {
+      personOptionsMap.set(key, { id: p.id, name: p.name.trim(), phone: p.phone })
+    }
+  }
+
+  for (const t of transactions) {
+    if (t.person_name && t.person_name.trim()) {
+      const key = t.person_name.trim().toLowerCase()
+      if (!personOptionsMap.has(key)) {
+        personOptionsMap.set(key, { id: t.person_id || undefined, name: t.person_name.trim() })
+      } else if (t.person_id && !personOptionsMap.get(key)!.id) {
+        personOptionsMap.get(key)!.id = t.person_id
+      }
+    }
+  }
+
+  const allPersonOptions = Array.from(personOptionsMap.values()).sort((a, b) =>
+    a.name.localeCompare(b.name)
+  )
+
+  // Derive selected person details and calculate live balance metrics
+  const selectedPerson = people.find(
+    (p) => p.id === selectedPersonId || p.name.toLowerCase().trim() === personName.toLowerCase().trim()
+  )
+  const targetPersonName = (selectedPerson ? selectedPerson.name : personName).toLowerCase().trim()
+
+  const personTransactions = transactions.filter((t) => {
+    if (selectedPersonId && t.person_id === selectedPersonId) return true
+    if (targetPersonName && t.person_name && t.person_name.toLowerCase().trim() === targetPersonName) return true
+    return false
+  })
+
+  const originalAmountTaken = personTransactions
+    .filter((t) => t.type === 'given')
+    .reduce((acc, t) => acc + Number(t.amount), 0)
+
+  const alreadyReceived = personTransactions
+    .filter((t) => t.type === 'received')
+    .reduce((acc, t) => acc + Number(t.amount), 0)
+
+  const currentBalanceBefore = originalAmountTaken - alreadyReceived
+  const amountBeingReceivedNum = parseFloat(amount) || 0
+  const remainingAmount = currentBalanceBefore - amountBeingReceivedNum
+
+  const handlePersonSelectChange = (val: string) => {
+    if (val === '__new__') {
+      setSelectedPersonId('')
+      setPersonName('')
+      setIsAddingNewPerson(true)
+    } else if (val === '') {
+      setSelectedPersonId('')
+      setPersonName('')
+      setIsAddingNewPerson(false)
+    } else {
+      const opt = allPersonOptions.find((o) => o.id === val || o.name === val)
+      if (opt) {
+        if (opt.id) {
+          setSelectedPersonId(opt.id)
+        } else {
+          const matched = people.find((p) => p.name.toLowerCase().trim() === opt.name.toLowerCase())
+          if (matched) setSelectedPersonId(matched.id)
+          else setSelectedPersonId('')
+        }
+        setPersonName(opt.name)
+      } else {
+        setSelectedPersonId(val)
+        setPersonName(val)
+      }
+      setIsAddingNewPerson(false)
+    }
+  }
+
   if (!isOpen) return null
 
   const handleSubmit = async (e: FormEvent) => {
@@ -95,19 +220,53 @@ export function QuickAddModal({
           return
         }
 
-        if ((moneyType === 'given' || moneyType === 'received') && !personName.trim()) {
-          showToast.error('Please enter person name')
-          setLoading(false)
-          return
+        let finalPersonId: string | undefined = selectedPersonId || undefined
+        let finalPersonName: string = personName.trim()
+
+        if (moneyType === 'given' || moneyType === 'received') {
+          if (isAddingNewPerson) {
+            if (!newPersonName.trim()) {
+              showToast.error('Please enter person name')
+              setLoading(false)
+              return
+            }
+            finalPersonName = newPersonName.trim()
+          } else if (!finalPersonName) {
+            showToast.error('Please select a person')
+            setLoading(false)
+            return
+          }
+
+          // Look up existing person in people table to reuse person_id and prevent duplicates
+          const existingPerson = people.find(
+            (p) =>
+              (finalPersonId && p.id === finalPersonId) ||
+              p.name.toLowerCase().trim() === finalPersonName.toLowerCase()
+          )
+
+          if (existingPerson) {
+            finalPersonId = existingPerson.id
+            finalPersonName = existingPerson.name
+          } else {
+            // Auto-create person in People table so they are permanently saved & linked
+            try {
+              const created = await peopleService.createPerson(finalPersonName)
+              finalPersonId = created.id
+              finalPersonName = created.name
+            } catch (err) {
+              console.warn('Auto-create person exception', err)
+            }
+          }
         }
 
         await transactionService.createTransaction({
           type: moneyType,
           amount: parseFloat(amount),
           category: moneyType === 'expense' ? category : 'N/A',
-          description,
+          description: description.trim() || undefined,
           payment_method: paymentMethod,
-          person_name: moneyType !== 'expense' ? personName : undefined,
+          person_id: moneyType !== 'expense' ? finalPersonId : undefined,
+          person_name: moneyType !== 'expense' ? finalPersonName : undefined,
           expected_return_date: moneyType !== 'expense' ? expectedReturnDate : undefined,
           purpose: moneyType !== 'expense' ? purpose : undefined,
           transaction_date: date,
@@ -338,18 +497,39 @@ export function QuickAddModal({
               {moneyType === 'given' && (
                 <div className="space-y-3 animate-in fade-in duration-150">
                   <div>
-                    <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+                    <label className="block text-xs font-semibold text-surface-600 dark:text-surface-400 mb-1">
                       Person Name *
                     </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Ravi, Rahul"
-                      value={personName}
-                      onChange={(e) => setPersonName(e.target.value)}
-                      className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
-                      autoFocus
-                      required
-                    />
+                    <div className="space-y-2">
+                      <select
+                        value={isAddingNewPerson ? '__new__' : (selectedPersonId || personName)}
+                        onChange={(e) => handlePersonSelectChange(e.target.value)}
+                        className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white font-medium focus:ring-2 focus:ring-amber-500 outline-none"
+                      >
+                        <option value="">[ Select Person ▼ ]</option>
+                        {allPersonOptions.map((opt) => (
+                          <option key={opt.id || opt.name} value={opt.id || opt.name}>
+                            👤 {opt.name} {opt.phone ? `(${opt.phone})` : ''}
+                          </option>
+                        ))}
+                        <option value="__new__">➕ Add New Person...</option>
+                      </select>
+
+                      {isAddingNewPerson && (
+                        <input
+                          type="text"
+                          placeholder="Enter new person name..."
+                          value={newPersonName}
+                          onChange={(e) => {
+                            setNewPersonName(e.target.value)
+                            setPersonName(e.target.value)
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-amber-400 dark:border-amber-600 text-surface-900 dark:text-white focus:ring-2 focus:ring-amber-500 outline-none animate-in fade-in duration-150"
+                          autoFocus
+                          required
+                        />
+                      )}
+                    </div>
                   </div>
 
                   <div>
@@ -442,18 +622,39 @@ export function QuickAddModal({
               {moneyType === 'received' && (
                 <div className="space-y-3 animate-in fade-in duration-150">
                   <div>
-                    <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+                    <label className="block text-xs font-semibold text-surface-600 dark:text-surface-400 mb-1">
                       Person Name *
                     </label>
-                    <input
-                      type="text"
-                      placeholder="e.g., Suresh, Amit"
-                      value={personName}
-                      onChange={(e) => setPersonName(e.target.value)}
-                      className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
-                      autoFocus
-                      required
-                    />
+                    <div className="space-y-2">
+                      <select
+                        value={isAddingNewPerson ? '__new__' : (selectedPersonId || personName)}
+                        onChange={(e) => handlePersonSelectChange(e.target.value)}
+                        className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                      >
+                        <option value="">[ Select Person ▼ ]</option>
+                        {allPersonOptions.map((opt) => (
+                          <option key={opt.id || opt.name} value={opt.id || opt.name}>
+                            👤 {opt.name} {opt.phone ? `(${opt.phone})` : ''}
+                          </option>
+                        ))}
+                        <option value="__new__">➕ Add New Person...</option>
+                      </select>
+
+                      {isAddingNewPerson && (
+                        <input
+                          type="text"
+                          placeholder="Enter new person name..."
+                          value={newPersonName}
+                          onChange={(e) => {
+                            setNewPersonName(e.target.value)
+                            setPersonName(e.target.value)
+                          }}
+                          className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-emerald-400 dark:border-emerald-600 text-surface-900 dark:text-white focus:ring-2 focus:ring-emerald-500 outline-none animate-in fade-in duration-150"
+                          autoFocus
+                          required
+                        />
+                      )}
+                    </div>
                   </div>
 
                   <div>
@@ -504,7 +705,7 @@ export function QuickAddModal({
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. College fees, Mess"
+                        placeholder="e.g. Food, College fees, Mess"
                         value={purpose}
                         onChange={(e) => setPurpose(e.target.value)}
                         className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
@@ -533,11 +734,67 @@ export function QuickAddModal({
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g., Need to repay by end of month"
+                      placeholder="e.g., Paid back partially"
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
                     />
+                  </div>
+
+                  {/* Live Person Balance Breakdown Card */}
+                  {(selectedPersonId || (isAddingNewPerson && newPersonName.trim()) || personName) && (
+                    <div className="rounded-2xl p-3.5 bg-surface-50 dark:bg-surface-800/90 border border-surface-200 dark:border-surface-700 space-y-2 text-xs animate-in fade-in duration-200">
+                      <p className="font-bold text-surface-900 dark:text-white flex items-center justify-between border-b border-surface-200 dark:border-surface-700 pb-1.5">
+                        <span>Selected Person:</span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
+                          {selectedPerson ? selectedPerson.name : (newPersonName || personName || 'Selected Person')}
+                        </span>
+                      </p>
+                      <div className="space-y-1.5 pt-0.5 text-surface-600 dark:text-surface-300">
+                        <div className="flex justify-between">
+                          <span>Original Amount Taken:</span>
+                          <span className="font-semibold text-surface-900 dark:text-white">₹{originalAmountTaken.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Already Received:</span>
+                          <span className="font-semibold text-surface-900 dark:text-white">₹{alreadyReceived.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between font-semibold text-surface-700 dark:text-surface-200 pt-1 border-t border-dashed border-surface-200 dark:border-surface-700">
+                          <span>Current Balance:</span>
+                          <span>₹{currentBalanceBefore.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between font-semibold text-emerald-600 dark:text-emerald-400">
+                          <span>Amount Being Received:</span>
+                          <span>₹{amountBeingReceivedNum.toLocaleString()}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-2 border-t border-surface-200 dark:border-surface-700">
+                        <span className="font-bold text-surface-900 dark:text-white">Remaining Amount:</span>
+                        <span className={cn(
+                          "px-3 py-1 rounded-xl text-sm font-extrabold shadow-xs",
+                          remainingAmount <= 0
+                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
+                            : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
+                        )}>
+                          ₹{Math.max(0, remainingAmount).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Remaining Amount Box */}
+                  <div className="rounded-2xl p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
+                        Remaining Amount
+                      </p>
+                      <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                        Total Taken − Total Received
+                      </p>
+                    </div>
+                    <span className="text-xl font-black text-emerald-700 dark:text-emerald-300">
+                      ₹{(selectedPersonId || personName) ? Math.max(0, remainingAmount).toLocaleString() : '0'}
+                    </span>
                   </div>
                 </div>
               )}

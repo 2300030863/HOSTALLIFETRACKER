@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { format, subDays } from 'date-fns'
 import { AppLayout } from '@/components/ui/AppLayout'
 import {
@@ -330,7 +331,15 @@ export default function ReportsPage() {
           </div>
 
           {/* Quick Download Buttons */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/money-summary"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md shadow-amber-600/20 transition-all cursor-pointer"
+            >
+              <PieChart size={15} />
+              <span>Money Taken & Given Summary</span>
+            </Link>
+
             <button
               onClick={handleDownloadImage}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-primary-600 to-indigo-600 hover:from-primary-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-primary-600/20 transition-all cursor-pointer"

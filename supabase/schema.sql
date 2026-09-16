@@ -284,3 +284,36 @@ alter table public.notes enable row level security;
 
 drop policy if exists "Users can CRUD own notes" on public.notes;
 create policy "Users can CRUD own notes" on public.notes for all using (auth.uid() = user_id);
+
+-- ============================================
+-- 11. NOTIFICATIONS TABLE
+-- ============================================
+create table if not exists public.notifications (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  type text not null check (type in ('attendance', 'reminder', 'system')),
+  title text not null,
+  message text not null,
+  scheduled_at timestamptz not null,
+  notification_key text not null,
+  read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- Prevent duplicate notifications per user
+create unique index if not exists notifications_user_key_unique
+  on public.notifications(user_id, notification_key);
+
+alter table public.notifications enable row level security;
+
+drop policy if exists "Users can view own notifications" on public.notifications;
+create policy "Users can view own notifications" on public.notifications for select using (auth.uid() = user_id);
+
+drop policy if exists "Users can create own notifications" on public.notifications;
+create policy "Users can create own notifications" on public.notifications for insert with check (auth.uid() = user_id);
+
+drop policy if exists "Users can update own notifications" on public.notifications;
+create policy "Users can update own notifications" on public.notifications for update using (auth.uid() = user_id);
+
+drop policy if exists "Users can delete own notifications" on public.notifications;
+create policy "Users can delete own notifications" on public.notifications for delete using (auth.uid() = user_id);

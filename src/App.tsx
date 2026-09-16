@@ -18,6 +18,8 @@ const RemindersPage = lazy(() => import('@/pages/RemindersPage'))
 const GoalsPage = lazy(() => import('@/pages/GoalsPage'))
 const ReportsPage = lazy(() => import('@/pages/ReportsPage'))
 
+const MoneySummaryPage = lazy(() => import('@/pages/MoneySummaryPage'))
+
 // Loading spinner for suspense
 function PageLoader() {
   return (
@@ -67,6 +69,7 @@ function AppRoutes() {
         {/* Protected app dashboard routes */}
         <Route path="/today" element={<PrivateRoute><Today /></PrivateRoute>} />
         <Route path="/money" element={<PrivateRoute><MoneyPage /></PrivateRoute>} />
+        <Route path="/money-summary" element={<PrivateRoute><MoneySummaryPage /></PrivateRoute>} />
         <Route path="/people" element={<PrivateRoute><PeoplePage /></PrivateRoute>} />
         <Route path="/activities" element={<PrivateRoute><ActivitiesPage /></PrivateRoute>} />
         <Route path="/reminders" element={<PrivateRoute><RemindersPage /></PrivateRoute>} />

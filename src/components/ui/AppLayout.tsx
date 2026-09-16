@@ -19,11 +19,13 @@ import {
   ChevronRight,
   User,
   Sparkles,
+  PieChart,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { QuickAddModal } from './QuickAddModal'
 import { NotificationSettingsModal } from './NotificationSettingsModal'
 import { UserProfileModal } from './UserProfileModal'
+import { NotificationCenter } from './NotificationCenter'
 import { useReminderScheduler } from '@/hooks/useReminderScheduler'
 
 interface AppLayoutProps {
@@ -74,6 +76,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
   const desktopNavItems = [
     { path: '/', label: 'Today', icon: <Home size={16} /> },
     { path: '/money', label: 'Money', icon: <Wallet size={16} /> },
+    { path: '/money-summary', label: 'Summary 📊', icon: <PieChart size={16} /> },
     { path: '/people', label: 'People', icon: <Users size={16} /> },
     { path: '/activities', label: 'Activities', icon: <ClipboardList size={16} /> },
     { path: '/reminders', label: 'Reminders', icon: <Bell size={16} /> },
@@ -82,7 +85,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
     { path: '/welcome', label: 'Welcome 🚀', icon: <Sparkles size={16} /> },
   ]
 
-  const isMoreRoute = ['/people', '/activities', '/goals', '/reports'].includes(
+  const isMoreRoute = ['/money-summary', '/people', '/activities', '/goals', '/reports'].includes(
     location.pathname
   )
 
@@ -134,6 +137,9 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
             </button>
 
             <div className="hidden md:flex items-center gap-1.5">
+              {/* Notification Center Bell (with badge) */}
+              <NotificationCenter />
+
               {/* Notification Settings Toggle */}
               <button
                 onClick={() => setIsNotificationModalOpen(true)}
@@ -160,6 +166,11 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
               >
                 <LogOut size={18} />
               </button>
+            </div>
+
+            {/* Notification Center Bell (mobile header) */}
+            <div className="md:hidden">
+              <NotificationCenter />
             </div>
           </div>
         </div>

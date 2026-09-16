@@ -185,3 +185,18 @@ export const EXPENSE_CATEGORIES = [
 ] as const
 
 export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number]
+
+// ===== Notification Types =====
+export type NotificationType = 'attendance' | 'reminder' | 'system'
+
+export interface AppNotification {
+  id: string
+  user_id: string
+  type: NotificationType
+  title: string
+  message: string
+  scheduled_at: string
+  notification_key: string
+  read: boolean
+  created_at: string
+}

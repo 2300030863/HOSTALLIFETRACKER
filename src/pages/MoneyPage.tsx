@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { QuickAddModal } from '@/components/ui/QuickAddModal'
 import { transactionService, subscribeToRealtime } from '@/services/dbServices'
@@ -12,6 +13,7 @@ import {
   Tag,
   CreditCard,
   Pencil,
+  PieChart,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { showToast } from '@/components/ui/Toast'
@@ -89,27 +91,34 @@ export default function MoneyPage() {
             </h1>
             <p className="text-xs text-surface-500">Expenses, money given/lent & received/borrowed</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              to="/money-summary"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-xs font-bold shadow-md shadow-primary-600/20 transition-all"
+            >
+              <PieChart size={15} />
+              <span>📊 Money Summary</span>
+            </Link>
             <button
               onClick={() => handleOpenAddModal('expense')}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition-all"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition-all"
             >
               <Plus size={15} />
               <span>💸 Add Expense</span>
             </button>
             <button
               onClick={() => handleOpenAddModal('given')}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md shadow-amber-600/20 transition-all"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-md shadow-amber-600/20 transition-all"
             >
               <Plus size={15} />
               <span>🤝 Money Given</span>
             </button>
             <button
               onClick={() => handleOpenAddModal('received')}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all"
+              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition-all"
             >
               <Plus size={15} />
-              <span>💰 Money Received</span>
+              <span>💰 Money Taken</span>
             </button>
           </div>
         </div>

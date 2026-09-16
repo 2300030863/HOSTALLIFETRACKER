@@ -89,11 +89,13 @@ export default function PeoplePage() {
   const handleSettleUp = async (personName: string, amount: number) => {
     try {
       const isOwesYou = amount > 0
+      const matchedPerson = people.find((p) => p.name.toLowerCase().trim() === personName.toLowerCase().trim())
       await transactionService.createTransaction({
         type: isOwesYou ? 'received' : 'given',
         amount: Math.abs(amount),
         category: 'Settlement',
         description: `Settlement with ${personName}`,
+        person_id: matchedPerson?.id || undefined,
         person_name: personName,
       })
       showToast.success(`Settled up with ${personName}! 🤝`)
