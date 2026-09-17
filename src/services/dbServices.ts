@@ -51,7 +51,12 @@ function setLocal<T>(key: string, items: T[]): void {
   }
 }
 
-const getTodayStr = () => new Date().toISOString().split('T')[0]
+export const getTodayStr = (d = new Date()) => {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export async function getAppStartDate(): Promise<string> {
   try {
@@ -172,9 +177,14 @@ export const attendanceService = {
       // Fallback
     }
 
-    if (!record) {
-      const local = getLocal<Attendance>(STORAGE_KEYS.attendance)
-      record = local.find((a) => a.attendance_date === today) || null
+    const local = getLocal<Attendance>(STORAGE_KEYS.attendance)
+    const localRecord = local.find((a) => a.attendance_date === today) || null
+
+    if (localRecord) {
+      // If no DB record exists OR if local status differs from DB (e.g. user edited to Present but DB trigger rejected it), prefer localRecord
+      if (!record || localRecord.status !== record.status) {
+        record = localRecord
+      }
     }
 
     // Auto-mark ABSENT after 10:30 PM if not marked yet
@@ -190,52 +200,85 @@ export const attendanceService = {
     const now = new Date().toISOString()
     const windowInfo = checkAttendanceWindow()
 
+    // Clear old absent reason if changing status to present or late without an explicit new reason
+    const finalReason = (status === 'present' || status === 'late') ? (reason || null) : (reason || null)
+
     // Window info check (logs notice if outside 9:00 PM - 10:30 PM window, but allows manual submission)
-    if (!windowInfo.isOpen && !reason) {
+    let autoReason = finalReason
+    if (!windowInfo.isOpen && !autoReason) {
       if (windowInfo.isBeforeWindow) {
-        reason = 'Submitted before window (Manual Present)'
+        autoReason = 'Submitted before window (Manual Present)'
       } else if (windowInfo.isAfterWindow) {
-        reason = 'Submitted after window (Manual Present)'
+        autoReason = 'Submitted after window (Manual Present)'
       }
     }
 
-    try {
+    let savedDbRecord: Attendance | null = null
+
+    if (isSupabaseConfigured) {
       const { data: userData } = await supabase.auth.getUser()
-      if (userData.user) {
-        const { data, error } = await supabase
+      if (userData?.user) {
+        const userId = userData.user.id
+
+        // Check if attendance row already exists for today
+        const { data: existing } = await supabase
           .from('attendance')
-          .upsert(
-            {
-              user_id: userData.user.id,
+          .select('id')
+          .eq('user_id', userId)
+          .eq('attendance_date', today)
+          .maybeSingle()
+
+        let dbData: any = null
+        let dbError: any = null
+
+        if (existing?.id) {
+          const res = await supabase
+            .from('attendance')
+            .update({
+              check_in: now,
+              status,
+              source: 'manual',
+              reason: autoReason,
+            })
+            .eq('id', existing.id)
+            .select()
+            .single()
+
+          dbData = res.data
+          dbError = res.error
+        } else {
+          const res = await supabase
+            .from('attendance')
+            .insert({
+              user_id: userId,
               attendance_date: today,
               check_in: now,
               status,
               source: 'manual',
-              reason: reason || null,
-            },
-            { onConflict: 'user_id,attendance_date' }
-          )
-          .select()
-          .single()
+              reason: autoReason,
+            })
+            .select()
+            .single()
 
-        if (error) {
-          throw new Error(`Database error: ${error.message || 'Failed to save attendance to Supabase.'}`)
+          dbData = res.data
+          dbError = res.error
         }
 
-        if (data) {
-          return data as Attendance
+        if (dbError) {
+          console.error('Supabase markAttendance DB Error:', dbError)
+          throw new Error(`Database error: ${dbError.message || 'Failed to save attendance in Supabase.'}`)
         }
-      }
-    } catch (err: any) {
-      if (err.message) {
-        throw err
+
+        if (dbData) {
+          savedDbRecord = dbData as Attendance
+        }
       }
     }
 
-    // Local fallback (only for demo/unauthenticated mode)
+    // Always keep local storage updated as well
     const local = getLocal<Attendance>(STORAGE_KEYS.attendance)
     const existingIdx = local.findIndex((a) => a.attendance_date === today)
-    const item: Attendance = {
+    const item: Attendance = savedDbRecord || {
       id: existingIdx >= 0 ? local[existingIdx].id : crypto.randomUUID(),
       user_id: 'local-user',
       attendance_date: today,
@@ -243,13 +286,14 @@ export const attendanceService = {
       check_out: existingIdx >= 0 ? local[existingIdx].check_out : null,
       status,
       source: 'manual',
-      reason: reason || null,
+      reason: autoReason,
       created_at: now,
     }
 
     if (existingIdx >= 0) local[existingIdx] = item
     else local.push(item)
     setLocal(STORAGE_KEYS.attendance, local)
+
     return item
   },
 
@@ -319,8 +363,17 @@ export const attendanceService = {
     const recordMap = new Map<string, Attendance>()
     existingRecords.forEach((r) => recordMap.set(r.attendance_date, r))
 
+    // Merge local storage attendance (gives priority to local user edits)
+    const localRecords = getLocal<Attendance>(STORAGE_KEYS.attendance)
+    localRecords.forEach((lr) => {
+      const dbRec = recordMap.get(lr.attendance_date)
+      if (!dbRec || lr.status !== dbRec.status) {
+        recordMap.set(lr.attendance_date, lr)
+      }
+    })
+
     const todayObj = new Date()
-    const todayStr = todayObj.toISOString().split('T')[0]
+    const todayStr = getTodayStr(todayObj)
     const windowInfo = checkAttendanceWindow()
     const result: Attendance[] = []
 
@@ -343,7 +396,7 @@ export const attendanceService = {
     let safetyCounter = 0
     while (curr >= earliestDate && safetyCounter < 366) {
       safetyCounter++
-      const dateStr = curr.toISOString().split('T')[0]
+      const dateStr = getTodayStr(curr)
       const existing = recordMap.get(dateStr)
 
       if (existing) {
