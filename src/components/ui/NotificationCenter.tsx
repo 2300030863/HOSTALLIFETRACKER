@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Bell, Check, CheckCheck, X, WifiOff, Clock } from 'lucide-react'
+import { Bell, Check, CheckCheck, X, WifiOff, Clock, Settings } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { notificationService } from '@/services/dbServices'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
@@ -7,9 +7,10 @@ import type { AppNotification } from '@/types'
 
 interface NotificationCenterProps {
   className?: string
+  onOpenSettings?: () => void
 }
 
-export function NotificationCenter({ className }: NotificationCenterProps) {
+export function NotificationCenter({ className, onOpenSettings }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -195,9 +196,22 @@ export function NotificationCenter({ className }: NotificationCenterProps) {
                     Mark all read
                   </button>
                 )}
+                {onOpenSettings && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false)
+                      onOpenSettings()
+                    }}
+                    className="p-1 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors cursor-pointer"
+                    title="Notification Settings"
+                  >
+                    <Settings size={15} />
+                  </button>
+                )}
                 <button
                   onClick={() => setIsOpen(false)}
-                  className="p-1 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+                  className="p-1 rounded-lg text-surface-400 hover:text-surface-600 dark:hover:text-surface-200 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors cursor-pointer"
+                  title="Close"
                 >
                   <X size={16} />
                 </button>
@@ -256,6 +270,25 @@ export function NotificationCenter({ className }: NotificationCenterProps) {
                     You're offline — notifications will sync when you reconnect
                   </span>
                 </div>
+              </div>
+            )}
+
+            {/* Footer with Notification Settings link */}
+            {onOpenSettings && (
+              <div className="px-4 py-2 border-t border-surface-100 dark:border-surface-800 bg-surface-50/60 dark:bg-surface-950/40 flex items-center justify-between shrink-0">
+                <span className="text-[11px] text-surface-500 dark:text-surface-400 font-medium">
+                  Sound & Alert settings
+                </span>
+                <button
+                  onClick={() => {
+                    setIsOpen(false)
+                    onOpenSettings()
+                  }}
+                  className="flex items-center gap-1.5 text-[11px] font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors cursor-pointer"
+                >
+                  <Settings size={12} />
+                  <span>Settings</span>
+                </button>
               </div>
             )}
           </div>

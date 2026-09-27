@@ -145,17 +145,8 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
             </button>
 
             <div className="hidden md:flex items-center gap-1">
-              {/* Notification Center Bell (with badge) */}
-              <NotificationCenter />
-
-              {/* Notification Settings Toggle */}
-              <button
-                onClick={() => setIsNotificationModalOpen(true)}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800/80 dark:text-surface-400 dark:hover:text-surface-200 transition-all cursor-pointer border-0 outline-none"
-                title="Notification Settings"
-              >
-                <Bell size={17} />
-              </button>
+              {/* Unified Notification Center Bell (with unread badge & settings modal access) */}
+              <NotificationCenter onOpenSettings={() => setIsNotificationModalOpen(true)} />
 
               {/* Dark/Light mode toggle */}
               <button
@@ -178,7 +169,7 @@ export function AppLayout({ children, onRefreshData }: AppLayoutProps) {
 
             {/* Notification Center Bell (mobile header) */}
             <div className="md:hidden">
-              <NotificationCenter />
+              <NotificationCenter onOpenSettings={() => setIsNotificationModalOpen(true)} />
             </div>
           </div>
         </div>
