@@ -91,8 +91,24 @@ const STATUS_CONFIG: Record<
 }
 
 export default function PlacementsPage() {
-  const [placements, setPlacements] = useState<PlacementApplication[]>([])
-  const [loading, setLoading] = useState(true)
+  const [placements, setPlacements] = useState<PlacementApplication[]>(() => {
+    try {
+      const raw = localStorage.getItem('ht_placements')
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  })
+  const [loading, setLoading] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem('ht_placements')
+      const parsed = raw ? JSON.parse(raw) : []
+      return !Array.isArray(parsed) || parsed.length === 0
+    } catch {
+      return false
+    }
+  })
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | PlacementStatus>('all')
 
@@ -124,9 +140,9 @@ export default function PlacementsPage() {
   })
 
   // Load placements
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (showSpinner = false) => {
     try {
-      setLoading(true)
+      if (showSpinner) setLoading(true)
       const data = await placementService.getAllPlacements()
       setPlacements(data)
     } catch (err) {
@@ -138,11 +154,11 @@ export default function PlacementsPage() {
   }, [])
 
   useEffect(() => {
-    loadData()
+    loadData(false)
 
     // 1. Listen to database table realtime changes
     const unsubscribe = subscribeToRealtime(() => {
-      loadData()
+      loadData(false)
     })
 
     // 2. Listen to instant cross-device broadcast messages (e.g. deletions on another device)
@@ -153,28 +169,28 @@ export default function PlacementsPage() {
           const sigs = msg.payload.deletedIds as string[]
           setPlacements((prev) => prev.filter((p) => !isPlacementDeleted(p, sigs)))
         }
-        loadData()
+        loadData(false)
       })
       .subscribe()
 
     // 3. Auto-sync whenever user focuses or switches back to this tab/app on any device
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        loadData()
+        loadData(false)
       }
     }
     const handleFocus = () => {
-      loadData()
+      loadData(false)
     }
     window.addEventListener('visibilitychange', handleVisibility)
     window.addEventListener('focus', handleFocus)
 
-    // 4. Polling interval every 6s while page is visible
+    // 4. Polling interval every 12s while page is visible
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        loadData()
+        loadData(false)
       }
-    }, 6000)
+    }, 12000)
 
     return () => {
       unsubscribe()
@@ -388,7 +404,7 @@ export default function PlacementsPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={async () => {
-                await loadData()
+                await loadData(true)
                 showToast.success('Placements synced across devices')
               }}
               disabled={loading}

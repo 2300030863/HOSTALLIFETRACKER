@@ -1394,6 +1394,7 @@ export function clearLocalUserStorage(): void {
   }
 }
 
+const PLACEMENTS_CLOUD_NOTE_TITLE = '__ht_placements_cloud_v1__'
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 export function subscribeToRealtime(onDataChange: (table?: string) => void): () => void {
@@ -1409,6 +1410,12 @@ export function subscribeToRealtime(onDataChange: (table?: string) => void): () 
         (payload) => {
           // Ignore updates to profiles table to prevent Auth loop
           if (payload.table === 'profiles') return
+
+          // Ignore updates to internal placement sync notes to prevent cascades
+          if (payload.table === 'notes') {
+            const newRec = payload.new as { title?: string } | null
+            if (newRec?.title === PLACEMENTS_CLOUD_NOTE_TITLE) return
+          }
 
           if (debounceTimer) clearTimeout(debounceTimer)
           debounceTimer = setTimeout(() => {
@@ -1854,7 +1861,6 @@ export function isPlacementDeleted(p: PlacementApplication, signatures: string[]
   return false
 }
 
-const PLACEMENTS_CLOUD_NOTE_TITLE = '__ht_placements_cloud_v1__'
 
 /**
  * Cloud Bridge: Syncs placements to Supabase Notes table, user metadata, and Realtime Broadcast.
@@ -2100,15 +2106,8 @@ export const placementService = {
             // Cleanly filter out any application deleted on this or any other device
             const cloudData = (data as PlacementApplication[]).filter((p) => !isPlacementDeleted(p, signatures))
 
-            // Background delete any orphaned rows in Supabase table
-            const orphaned = (data as PlacementApplication[]).filter((p) => isPlacementDeleted(p, signatures))
-            for (const orph of orphaned) {
-              supabase.from('placement_applications').delete().eq('id', orph.id).then(() => {}, () => {})
-            }
-
             setLocal(STORAGE_KEYS.placements, cloudData)
             localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
-            syncPlacementsToCloudBackup(userId, cloudData, signatures).catch(() => {})
             return cloudData
           }
         } catch {

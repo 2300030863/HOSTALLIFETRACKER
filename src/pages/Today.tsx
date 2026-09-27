@@ -86,8 +86,8 @@ export default function Today() {
   const [quickAddMoneyType, setQuickAddMoneyType] = useState<'expense' | 'given' | 'received'>('expense')
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
 
-  const loadData = useCallback(async () => {
-    setLoading(true)
+  const loadData = useCallback(async (showSpinner = false) => {
+    if (showSpinner) setLoading(true)
     try {
       const [attData, remData, actData, txData, goalData, habData, plcStats, plcEvents] = await Promise.all([
         attendanceService.getTodayAttendance(),
@@ -121,12 +121,12 @@ export default function Today() {
   }, [])
 
   useEffect(() => {
-    loadData()
+    loadData(true)
     const unsubscribe = subscribeToRealtime(() => {
-      loadData()
+      loadData(false)
     })
     return () => unsubscribe()
-  }, [])
+  }, [loadData])
 
   const handleOpenQuickAdd = (
     tab: 'money' | 'attendance' | 'activity' | 'reminder' | 'goal' | 'note',
@@ -260,7 +260,7 @@ export default function Today() {
             </div>
 
             <button
-              onClick={loadData}
+              onClick={() => loadData(true)}
               disabled={loading}
               className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-2xl bg-white/15 hover:bg-white/25 active:scale-95 text-white text-xs font-bold backdrop-blur-md transition-all self-start sm:self-auto border border-white/20 shadow-sm cursor-pointer"
             >
