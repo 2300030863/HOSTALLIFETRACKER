@@ -1174,13 +1174,14 @@ export const noteService = {
     try {
       const { data, error } = await supabase.from('notes').select('*').order('created_at', { ascending: false })
       if (!error && data !== null) {
-        setLocal(STORAGE_KEYS.notes, data as Note[])
-        return data as Note[]
+        const filtered = (data as Note[]).filter((n) => !n.title.startsWith('__ht_'))
+        setLocal(STORAGE_KEYS.notes, filtered)
+        return filtered
       }
     } catch {
       // Fallback
     }
-    return getLocal<Note>(STORAGE_KEYS.notes)
+    return getLocal<Note>(STORAGE_KEYS.notes).filter((n) => !n.title.startsWith('__ht_'))
   },
 
   async createNote(title: string, content: string, tags?: string[]): Promise<Note> {
@@ -1341,6 +1342,40 @@ export async function syncLocalDataToCloud(userId: string): Promise<void> {
       })
     }
 
+    // 8. Sync Placements
+    const localPlacements = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+    const deletedPlacementIds = getDeletedPlacementIds()
+    if (localPlacements.length > 0 || deletedPlacementIds.length > 0) {
+      for (const p of localPlacements) {
+        try {
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.id)
+          await supabase.from('placement_applications').upsert({
+            ...(isUuid ? { id: p.id } : {}),
+            user_id: userId,
+            company_name: p.company_name,
+            job_role: p.job_role,
+            application_date: p.application_date || null,
+            application_deadline: p.application_deadline || null,
+            status: p.status,
+            job_url: p.job_url || null,
+            location: p.location || null,
+            ctc: p.ctc || null,
+            eligibility: p.eligibility || null,
+            test_date: p.test_date || null,
+            interview_date: p.interview_date || null,
+            follow_up_date: p.follow_up_date || null,
+            contact_name: p.contact_name || null,
+            contact_email: p.contact_email || null,
+            resume_version: p.resume_version || null,
+            notes: p.notes || null,
+          })
+        } catch {
+          // ignore if table doesn't exist
+        }
+      }
+      await syncPlacementsToCloudBackup(userId, localPlacements, deletedPlacementIds)
+    }
+
     // Clear un-synced local user items so local state stays clean
     clearLocalUserStorage()
   } catch (err) {
@@ -1352,6 +1387,8 @@ export function clearLocalUserStorage(): void {
   try {
     Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key))
     localStorage.removeItem('ht_people')
+    localStorage.removeItem('ht_deleted_placement_ids')
+    localStorage.removeItem('ht_placements_seeded_v1')
   } catch {
     // Ignore
   }
@@ -1771,6 +1808,113 @@ function setDeletedPlacementIds(ids: string[]): void {
   }
 }
 
+const PLACEMENTS_CLOUD_NOTE_TITLE = '__ht_placements_cloud_v1__'
+
+/**
+ * Cloud Bridge: Syncs placements to Supabase Notes table, user metadata, and Realtime Broadcast.
+ * Guarantees instant cross-device deletion and synchronization even before custom SQL tables exist.
+ */
+export async function syncPlacementsToCloudBackup(
+  userId: string,
+  placements: PlacementApplication[],
+  deletedIds: string[]
+): Promise<void> {
+  if (!userId) return
+
+  const payload = {
+    placements,
+    deletedIds,
+    seeded: true,
+    updated_at: new Date().toISOString(),
+  }
+
+  // 1. Send instant real-time broadcast so all open devices update immediately
+  try {
+    const channel = supabase.channel('ht_placements_broadcast')
+    channel.send({
+      type: 'broadcast',
+      event: 'placements_changed',
+      payload: { deletedIds, count: placements.length, timestamp: Date.now() },
+    })
+  } catch {
+    // ignore
+  }
+
+  // 2. Cleanly delete old sync records for this user to prevent duplicate rows & PGRST116 errors
+  try {
+    await supabase
+      .from('notes')
+      .delete()
+      .eq('user_id', userId)
+      .eq('title', PLACEMENTS_CLOUD_NOTE_TITLE)
+
+    // Insert clean latest single document
+    await supabase.from('notes').insert({
+      user_id: userId,
+      title: PLACEMENTS_CLOUD_NOTE_TITLE,
+      content: JSON.stringify(payload),
+      tags: ['__system_placement_sync__'],
+    })
+  } catch (err) {
+    console.warn('Note placement sync warning:', err)
+  }
+
+  // 3. Mirror to Supabase User Metadata (persists with auth session across all devices)
+  try {
+    await supabase.auth.updateUser({
+      data: {
+        ht_cloud_placements: payload,
+      },
+    })
+  } catch (err) {
+    console.warn('Metadata placement sync warning:', err)
+  }
+}
+
+/**
+ * Cloud Bridge: Fetch placement applications from cloud backup
+ */
+export async function getPlacementsFromCloudBackup(userId: string): Promise<{
+  placements?: PlacementApplication[]
+  deletedIds?: string[]
+  seeded?: boolean
+} | null> {
+  if (!userId) return null
+
+  // 1. Try notes table backup (safe single-row retrieval with limit 1)
+  try {
+    const { data, error } = await supabase
+      .from('notes')
+      .select('content')
+      .eq('user_id', userId)
+      .eq('title', PLACEMENTS_CLOUD_NOTE_TITLE)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+
+    if (!error && data && data.length > 0 && data[0]?.content) {
+      const parsed = JSON.parse(data[0].content)
+      if (parsed && (Array.isArray(parsed.placements) || parsed.seeded)) {
+        return parsed
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Try user_metadata backup
+  try {
+    const { data: userData } = await supabase.auth.getUser()
+    const meta = userData?.user?.user_metadata?.ht_cloud_placements
+    if (meta && (Array.isArray(meta.placements) || meta.seeded)) {
+      return meta
+    }
+  } catch {
+    // ignore
+  }
+
+  return null
+}
+
 export const placementService = {
   /**
    * Helper: Automatically generate and schedule reminders for placement events
@@ -1862,51 +2006,119 @@ export const placementService = {
 
   /**
    * Fetch all placement applications.
-   * Pulls from Supabase with fallback to local storage.
+   * Pulls from Supabase with fallback to cloud bridge and local storage.
    */
   async getAllPlacements(): Promise<PlacementApplication[]> {
-    const deletedIds = getDeletedPlacementIds()
-    const isSeeded = localStorage.getItem(PLACEMENTS_SEEDED_KEY) === 'true'
+    let deletedIds = getDeletedPlacementIds()
+    const isSeededLocally = localStorage.getItem(PLACEMENTS_SEEDED_KEY) === 'true'
 
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData?.user) {
-        const { data, error } = await supabase
-          .from('placement_applications')
-          .select('*')
-          .eq('user_id', userData.user.id)
-          .order('created_at', { ascending: false })
+        const userId = userData.user.id
 
-        if (!error && data !== null) {
-          const cloudData = (data as PlacementApplication[]).filter((p) => !deletedIds.includes(p.id))
+        // 1. First, check if primary `placement_applications` table exists and returns data
+        let tableSucceeded = false
+        try {
+          const { data, error } = await supabase
+            .from('placement_applications')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
 
-          // If database has records, use database records as ground truth
-          if (cloudData.length > 0) {
-            setLocal(STORAGE_KEYS.placements, cloudData)
+          if (!error && data !== null) {
+            tableSucceeded = true
+
+            // Merge cloud backup deleted IDs
+            const backup = await getPlacementsFromCloudBackup(userId)
+            if (backup?.deletedIds && Array.isArray(backup.deletedIds)) {
+              deletedIds = Array.from(new Set([...deletedIds, ...backup.deletedIds]))
+              setDeletedPlacementIds(deletedIds)
+            }
+
+            const cloudData = (data as PlacementApplication[]).filter((p) => !deletedIds.includes(p.id))
+
+            if (cloudData.length > 0) {
+              setLocal(STORAGE_KEYS.placements, cloudData)
+              localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
+              // Keep cloud backup in sync
+              syncPlacementsToCloudBackup(userId, cloudData, deletedIds).catch(() => {})
+              return cloudData
+            }
+
+            // If table has 0 rows, check if cloud backup has items from other devices
+            if (backup && backup.placements && backup.placements.length > 0) {
+              const toMigrate = backup.placements.filter((p) => !deletedIds.includes(p.id))
+              if (toMigrate.length > 0) {
+                for (const item of toMigrate) {
+                  try {
+                    await supabase.from('placement_applications').insert({
+                      user_id: userId,
+                      company_name: item.company_name,
+                      job_role: item.job_role,
+                      application_date: item.application_date || null,
+                      application_deadline: item.application_deadline || null,
+                      status: item.status,
+                      job_url: item.job_url || null,
+                      location: item.location || null,
+                      ctc: item.ctc || null,
+                      eligibility: item.eligibility || null,
+                      test_date: item.test_date || null,
+                      interview_date: item.interview_date || null,
+                      follow_up_date: item.follow_up_date || null,
+                      contact_name: item.contact_name || null,
+                      contact_email: item.contact_email || null,
+                      resume_version: item.resume_version || null,
+                      notes: item.notes || null,
+                    })
+                  } catch {
+                    // ignore
+                  }
+                }
+                setLocal(STORAGE_KEYS.placements, toMigrate)
+                localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
+                return toMigrate
+              }
+            }
+
+            // Table has 0 rows and no items to migrate -> User deleted all items or started clean
+            setLocal(STORAGE_KEYS.placements, [])
             localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
-            return cloudData
+            return []
           }
+        } catch {
+          tableSucceeded = false
+        }
 
-          // If database is empty, check local storage
-          const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements).filter((p) => !deletedIds.includes(p.id))
-
-          if (local.length === 0 && !isSeeded) {
-            // First time only: seed demo data
-            localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
-            setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
-            return INITIAL_PLACEMENTS
+        // 2. If table doesn't exist yet or had error, retrieve seamlessly from Cloud Bridge
+        if (!tableSucceeded) {
+          const backup = await getPlacementsFromCloudBackup(userId)
+          if (backup) {
+            if (backup.deletedIds && Array.isArray(backup.deletedIds)) {
+              deletedIds = Array.from(new Set([...deletedIds, ...backup.deletedIds]))
+              setDeletedPlacementIds(deletedIds)
+            }
+            if (backup.placements && Array.isArray(backup.placements)) {
+              const active = backup.placements.filter((p) => !deletedIds.includes(p.id))
+              setLocal(STORAGE_KEYS.placements, active)
+              localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
+              return active
+            }
+            if (backup.seeded) {
+              setLocal(STORAGE_KEYS.placements, [])
+              localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
+              return []
+            }
           }
-
-          setLocal(STORAGE_KEYS.placements, local)
-          return local
         }
       }
     } catch {
       // Fallback
     }
 
+    // 3. Fallback to local storage
     const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements).filter((p) => !deletedIds.includes(p.id))
-    if (local.length === 0 && !isSeeded) {
+    if (local.length === 0 && !isSeededLocally) {
       localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
       setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
       return INITIAL_PLACEMENTS
@@ -1942,38 +2154,49 @@ export const placementService = {
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData?.user) {
-        const { data, error } = await supabase
-          .from('placement_applications')
-          .insert({
-            user_id: userData.user.id,
-            company_name: payload.company_name,
-            job_role: payload.job_role,
-            application_date: payload.application_date || null,
-            application_deadline: payload.application_deadline || null,
-            status: payload.status,
-            job_url: payload.job_url || null,
-            location: payload.location || null,
-            ctc: payload.ctc || null,
-            eligibility: payload.eligibility || null,
-            test_date: payload.test_date || null,
-            interview_date: payload.interview_date || null,
-            follow_up_date: payload.follow_up_date || null,
-            contact_name: payload.contact_name || null,
-            contact_email: payload.contact_email || null,
-            resume_version: payload.resume_version || null,
-            notes: payload.notes || null,
-          })
-          .select()
-          .single()
+        createdRecord.user_id = userData.user.id
 
-        if (!error && data) {
-          createdRecord = data as PlacementApplication
-          const updatedLocal = local.map((p) => (p.id === newRecord.id ? createdRecord : p))
-          setLocal(STORAGE_KEYS.placements, updatedLocal)
+        // Try primary table
+        try {
+          const { data, error } = await supabase
+            .from('placement_applications')
+            .insert({
+              user_id: userData.user.id,
+              company_name: payload.company_name,
+              job_role: payload.job_role,
+              application_date: payload.application_date || null,
+              application_deadline: payload.application_deadline || null,
+              status: payload.status,
+              job_url: payload.job_url || null,
+              location: payload.location || null,
+              ctc: payload.ctc || null,
+              eligibility: payload.eligibility || null,
+              test_date: payload.test_date || null,
+              interview_date: payload.interview_date || null,
+              follow_up_date: payload.follow_up_date || null,
+              contact_name: payload.contact_name || null,
+              contact_email: payload.contact_email || null,
+              resume_version: payload.resume_version || null,
+              notes: payload.notes || null,
+            })
+            .select()
+            .single()
+
+          if (!error && data) {
+            createdRecord = data as PlacementApplication
+          }
+        } catch {
+          // ignore if table not ready
         }
+
+        const updatedLocal = local.map((p) => (p.id === newRecord.id ? createdRecord : p))
+        setLocal(STORAGE_KEYS.placements, updatedLocal)
+
+        // Sync to cloud backup for instant cross-device availability
+        await syncPlacementsToCloudBackup(userData.user.id, updatedLocal, getDeletedPlacementIds())
       }
     } catch (e) {
-      console.warn('Supabase placement insert failed, saved locally:', e)
+      console.warn('Placement cloud sync error:', e)
     }
 
     if (autoCreateReminders) {
@@ -2014,45 +2237,48 @@ export const placementService = {
       if (userData?.user) {
         const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
         if (isUuid) {
-          const { data, error } = await supabase
-            .from('placement_applications')
-            .update({
-              company_name: payload.company_name,
-              job_role: payload.job_role,
-              application_date: payload.application_date,
-              application_deadline: payload.application_deadline,
-              status: payload.status,
-              job_url: payload.job_url,
-              location: payload.location,
-              ctc: payload.ctc,
-              eligibility: payload.eligibility,
-              test_date: payload.test_date,
-              interview_date: payload.interview_date,
-              follow_up_date: payload.follow_up_date,
-              contact_name: payload.contact_name,
-              contact_email: payload.contact_email,
-              resume_version: payload.resume_version,
-              notes: payload.notes,
-              updated_at: now,
-            })
-            .eq('id', id)
-            .eq('user_id', userData.user.id)
-            .select()
-            .single()
+          try {
+            const { data, error } = await supabase
+              .from('placement_applications')
+              .update({
+                company_name: payload.company_name,
+                job_role: payload.job_role,
+                application_date: payload.application_date,
+                application_deadline: payload.application_deadline,
+                status: payload.status,
+                job_url: payload.job_url,
+                location: payload.location,
+                ctc: payload.ctc,
+                eligibility: payload.eligibility,
+                test_date: payload.test_date,
+                interview_date: payload.interview_date,
+                follow_up_date: payload.follow_up_date,
+                contact_name: payload.contact_name,
+                contact_email: payload.contact_email,
+                resume_version: payload.resume_version,
+                notes: payload.notes,
+                updated_at: now,
+              })
+              .eq('id', id)
+              .eq('user_id', userData.user.id)
+              .select()
+              .single()
 
-          if (!error && data) {
-            const finalItem = data as PlacementApplication
-            local[index] = finalItem
-            setLocal(STORAGE_KEYS.placements, local)
-            if (autoCreateReminders) {
-              await this.createPlacementReminders(finalItem)
+            if (!error && data) {
+              const finalItem = data as PlacementApplication
+              local[index] = finalItem
+              setLocal(STORAGE_KEYS.placements, local)
             }
-            return finalItem
+          } catch {
+            // ignore
           }
         }
+
+        // Sync to cloud backup
+        await syncPlacementsToCloudBackup(userData.user.id, local, getDeletedPlacementIds())
       }
     } catch (e) {
-      console.warn('Supabase placement update failed, saved locally:', e)
+      console.warn('Placement cloud update error:', e)
     }
 
     if (autoCreateReminders) {
@@ -2066,7 +2292,7 @@ export const placementService = {
    * Delete a placement application
    */
   async deletePlacement(id: string): Promise<boolean> {
-    // 1. Permanently track in deleted IDs so it NEVER resurrects on reload or realtime
+    // 1. Permanently track in deleted IDs so it NEVER resurrects on any device
     const deletedIds = getDeletedPlacementIds()
     if (!deletedIds.includes(id)) {
       deletedIds.push(id)
@@ -2082,22 +2308,25 @@ export const placementService = {
     const filtered = local.filter((p) => p.id !== id)
     setLocal(STORAGE_KEYS.placements, filtered)
 
-    // 4. Delete from Supabase if user is logged in
+    // 4. Delete from Supabase & sync across all devices via cloud bridge
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData?.user) {
         const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
         if (isUuid) {
-          const { error } = await supabase
-            .from('placement_applications')
-            .delete()
-            .eq('id', id)
-            .eq('user_id', userData.user.id)
-
-          if (error) {
-            console.warn('Supabase placement delete warning:', error)
+          try {
+            await supabase
+              .from('placement_applications')
+              .delete()
+              .eq('id', id)
+              .eq('user_id', userData.user.id)
+          } catch {
+            // ignore
           }
         }
+
+        // Sync deletion across all devices via cloud backup
+        await syncPlacementsToCloudBackup(userData.user.id, filtered, deletedIds)
       }
     } catch (e) {
       console.warn('Supabase placement delete exception:', e)

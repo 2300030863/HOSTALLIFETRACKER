@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
 import { placementService, subscribeToRealtime } from '@/services/dbServices'
+import { supabase } from '@/services/supabase'
 import type { PlacementApplication, PlacementStatus } from '@/types'
 import {
   GraduationCap,
@@ -21,6 +22,7 @@ import {
   Bell,
   X,
   Loader2,
+  RefreshCw,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { showToast } from '@/components/ui/Toast'
@@ -137,10 +139,46 @@ export default function PlacementsPage() {
 
   useEffect(() => {
     loadData()
+
+    // 1. Listen to database table realtime changes
     const unsubscribe = subscribeToRealtime(() => {
       loadData()
     })
-    return () => unsubscribe()
+
+    // 2. Listen to instant cross-device broadcast messages (e.g. deletions on another device)
+    const broadcastChannel = supabase
+      .channel('ht_placements_broadcast')
+      .on('broadcast', { event: 'placements_changed' }, () => {
+        loadData()
+      })
+      .subscribe()
+
+    // 3. Auto-sync whenever user focuses or switches back to this tab/app on any device
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        loadData()
+      }
+    }
+    const handleFocus = () => {
+      loadData()
+    }
+    window.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener('focus', handleFocus)
+
+    // 4. Polling interval every 6s while page is visible
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadData()
+      }
+    }, 6000)
+
+    return () => {
+      unsubscribe()
+      supabase.removeChannel(broadcastChannel)
+      window.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener('focus', handleFocus)
+      clearInterval(interval)
+    }
   }, [loadData])
 
   // Reset form
@@ -336,13 +374,28 @@ export default function PlacementsPage() {
             </div>
           </div>
 
-          <button
-            onClick={handleOpenAdd}
-            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-primary-600 to-indigo-600 text-white font-bold text-sm shadow-lg shadow-primary-600/30 hover:shadow-primary-600/50 hover:scale-102 active:scale-98 transition-all cursor-pointer"
-          >
-            <Plus size={18} />
-            <span>Add Application</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                await loadData()
+                showToast.success('Placements synced across devices')
+              }}
+              disabled={loading}
+              className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-2xl bg-white dark:bg-surface-900 border border-surface-200/80 dark:border-white/[0.08] text-surface-600 dark:text-surface-300 font-bold text-sm hover:bg-surface-50 dark:hover:bg-surface-800 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              title="Sync placements with cloud across devices"
+            >
+              <RefreshCw size={16} className={cn(loading && 'animate-spin text-primary-500')} />
+              <span className="hidden sm:inline">Sync</span>
+            </button>
+
+            <button
+              onClick={handleOpenAdd}
+              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-primary-600 to-indigo-600 text-white font-bold text-sm shadow-lg shadow-primary-600/30 hover:shadow-primary-600/50 hover:scale-102 active:scale-98 transition-all cursor-pointer"
+            >
+              <Plus size={18} />
+              <span>Add Application</span>
+            </button>
+          </div>
         </div>
 
         {/* Stats Summary KPI Row */}
