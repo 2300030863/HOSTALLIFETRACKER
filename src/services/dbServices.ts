@@ -1751,6 +1751,26 @@ const INITIAL_PLACEMENTS: PlacementApplication[] = [
   }
 ]
 
+const PLACEMENTS_SEEDED_KEY = 'ht_placements_seeded_v1'
+const DELETED_PLACEMENTS_KEY = 'ht_deleted_placement_ids'
+
+function getDeletedPlacementIds(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETED_PLACEMENTS_KEY)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
+  }
+}
+
+function setDeletedPlacementIds(ids: string[]): void {
+  try {
+    localStorage.setItem(DELETED_PLACEMENTS_KEY, JSON.stringify(ids))
+  } catch {
+    // ignore
+  }
+}
+
 export const placementService = {
   /**
    * Helper: Automatically generate and schedule reminders for placement events
@@ -1845,6 +1865,9 @@ export const placementService = {
    * Pulls from Supabase with fallback to local storage.
    */
   async getAllPlacements(): Promise<PlacementApplication[]> {
+    const deletedIds = getDeletedPlacementIds()
+    const isSeeded = localStorage.getItem(PLACEMENTS_SEEDED_KEY) === 'true'
+
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData?.user) {
@@ -1855,28 +1878,40 @@ export const placementService = {
           .order('created_at', { ascending: false })
 
         if (!error && data !== null) {
-          if (data.length === 0) {
-            // Seed initial demo data for new user in local storage
-            const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
-            if (local.length === 0) {
-              setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
-              return INITIAL_PLACEMENTS
-            }
-            return local
+          const cloudData = (data as PlacementApplication[]).filter((p) => !deletedIds.includes(p.id))
+
+          // If database has records, use database records as ground truth
+          if (cloudData.length > 0) {
+            setLocal(STORAGE_KEYS.placements, cloudData)
+            localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
+            return cloudData
           }
-          setLocal(STORAGE_KEYS.placements, data as PlacementApplication[])
-          return data as PlacementApplication[]
+
+          // If database is empty, check local storage
+          const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements).filter((p) => !deletedIds.includes(p.id))
+
+          if (local.length === 0 && !isSeeded) {
+            // First time only: seed demo data
+            localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
+            setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
+            return INITIAL_PLACEMENTS
+          }
+
+          setLocal(STORAGE_KEYS.placements, local)
+          return local
         }
       }
     } catch {
       // Fallback
     }
 
-    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
-    if (local.length === 0) {
+    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements).filter((p) => !deletedIds.includes(p.id))
+    if (local.length === 0 && !isSeeded) {
+      localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
       setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
       return INITIAL_PLACEMENTS
     }
+
     return local
   },
 
@@ -1900,6 +1935,7 @@ export const placementService = {
 
     local.unshift(newRecord)
     setLocal(STORAGE_KEYS.placements, local)
+    localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
 
     let createdRecord = newRecord
 
@@ -1976,39 +2012,43 @@ export const placementService = {
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData?.user) {
-        const { data, error } = await supabase
-          .from('placement_applications')
-          .update({
-            company_name: payload.company_name,
-            job_role: payload.job_role,
-            application_date: payload.application_date,
-            application_deadline: payload.application_deadline,
-            status: payload.status,
-            job_url: payload.job_url,
-            location: payload.location,
-            ctc: payload.ctc,
-            eligibility: payload.eligibility,
-            test_date: payload.test_date,
-            interview_date: payload.interview_date,
-            follow_up_date: payload.follow_up_date,
-            contact_name: payload.contact_name,
-            contact_email: payload.contact_email,
-            resume_version: payload.resume_version,
-            notes: payload.notes,
-            updated_at: now,
-          })
-          .eq('id', id)
-          .select()
-          .single()
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        if (isUuid) {
+          const { data, error } = await supabase
+            .from('placement_applications')
+            .update({
+              company_name: payload.company_name,
+              job_role: payload.job_role,
+              application_date: payload.application_date,
+              application_deadline: payload.application_deadline,
+              status: payload.status,
+              job_url: payload.job_url,
+              location: payload.location,
+              ctc: payload.ctc,
+              eligibility: payload.eligibility,
+              test_date: payload.test_date,
+              interview_date: payload.interview_date,
+              follow_up_date: payload.follow_up_date,
+              contact_name: payload.contact_name,
+              contact_email: payload.contact_email,
+              resume_version: payload.resume_version,
+              notes: payload.notes,
+              updated_at: now,
+            })
+            .eq('id', id)
+            .eq('user_id', userData.user.id)
+            .select()
+            .single()
 
-        if (!error && data) {
-          const finalItem = data as PlacementApplication
-          local[index] = finalItem
-          setLocal(STORAGE_KEYS.placements, local)
-          if (autoCreateReminders) {
-            await this.createPlacementReminders(finalItem)
+          if (!error && data) {
+            const finalItem = data as PlacementApplication
+            local[index] = finalItem
+            setLocal(STORAGE_KEYS.placements, local)
+            if (autoCreateReminders) {
+              await this.createPlacementReminders(finalItem)
+            }
+            return finalItem
           }
-          return finalItem
         }
       }
     } catch (e) {
@@ -2026,17 +2066,54 @@ export const placementService = {
    * Delete a placement application
    */
   async deletePlacement(id: string): Promise<boolean> {
+    // 1. Permanently track in deleted IDs so it NEVER resurrects on reload or realtime
+    const deletedIds = getDeletedPlacementIds()
+    if (!deletedIds.includes(id)) {
+      deletedIds.push(id)
+      setDeletedPlacementIds(deletedIds)
+    }
+
+    // 2. Mark as seeded so empty state does not trigger re-seeding
+    localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
+
+    // 3. Update localStorage
     const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+    const placementToDelete = local.find((p) => p.id === id)
     const filtered = local.filter((p) => p.id !== id)
     setLocal(STORAGE_KEYS.placements, filtered)
 
+    // 4. Delete from Supabase if user is logged in
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData?.user) {
-        await supabase.from('placement_applications').delete().eq('id', id)
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+        if (isUuid) {
+          const { error } = await supabase
+            .from('placement_applications')
+            .delete()
+            .eq('id', id)
+            .eq('user_id', userData.user.id)
+
+          if (error) {
+            console.warn('Supabase placement delete warning:', error)
+          }
+        }
       }
     } catch (e) {
-      console.warn('Supabase placement delete failed, removed locally:', e)
+      console.warn('Supabase placement delete exception:', e)
+    }
+
+    // 5. Clean up associated reminders
+    if (placementToDelete?.company_name) {
+      try {
+        const rems = getLocal<Reminder>(STORAGE_KEYS.reminders)
+        const updatedRems = rems.filter(
+          (r) => !r.title.toLowerCase().includes(placementToDelete.company_name.toLowerCase())
+        )
+        setLocal(STORAGE_KEYS.reminders, updatedRems)
+      } catch {
+        // ignore
+      }
     }
 
     return true

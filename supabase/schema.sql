@@ -350,9 +350,16 @@ create index if not exists idx_placement_applications_status on public.placement
 alter table public.placement_applications enable row level security;
 
 drop policy if exists "Users can CRUD own placement applications" on public.placement_applications;
-create policy "Users can CRUD own placement applications"
-  on public.placement_applications
-  for all
-  using (auth.uid() = user_id)
-  with check (auth.uid() = user_id);
+drop policy if exists "Users can view own placement applications" on public.placement_applications;
+create policy "Users can view own placement applications" on public.placement_applications for select using (auth.uid() = user_id);
+
+drop policy if exists "Users can create own placement applications" on public.placement_applications;
+create policy "Users can create own placement applications" on public.placement_applications for insert with check (auth.uid() = user_id);
+
+drop policy if exists "Users can update own placement applications" on public.placement_applications;
+create policy "Users can update own placement applications" on public.placement_applications for update using (auth.uid() = user_id);
+
+drop policy if exists "Users can delete own placement applications" on public.placement_applications;
+create policy "Users can delete own placement applications" on public.placement_applications for delete using (auth.uid() = user_id);
+
 
