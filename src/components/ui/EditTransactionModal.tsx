@@ -191,9 +191,10 @@ export function EditTransactionModal({ transaction, isOpen, onClose, onSuccess }
                 onChange={(e) => setType(e.target.value as TransactionType)}
                 className="w-full px-3 py-2.5 rounded-xl border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-800 text-surface-900 dark:text-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
               >
-                <option value="expense">🔴 Expense</option>
-                <option value="given">🤝 Money Given (Lent)</option>
-                <option value="received">💰 Money Received</option>
+                <option value="expense">💸 Expense (Spent)</option>
+                <option value="given">🤝 Lent (They owe you)</option>
+                <option value="received">📥 Borrowed (You owe them)</option>
+                <option value="settlement">⚖️ Debt Settlement</option>
               </select>
             </div>
 

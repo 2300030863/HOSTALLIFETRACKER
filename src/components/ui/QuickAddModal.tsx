@@ -31,7 +31,7 @@ interface QuickAddModalProps {
   onClose: () => void
   onSuccess: () => void
   initialTab?: QuickAddTab
-  initialMoneyType?: 'expense' | 'given' | 'received'
+  initialMoneyType?: 'expense' | 'given' | 'received' | 'settlement'
   initialPersonId?: string
   initialPersonName?: string
 }
@@ -49,14 +49,15 @@ export function QuickAddModal({
   const [loading, setLoading] = useState(false)
 
   // Money shared state
-  const [moneyType, setMoneyType] = useState<'expense' | 'given' | 'received'>(initialMoneyType)
+  const [moneyType, setMoneyType] = useState<'expense' | 'given' | 'received' | 'settlement'>(initialMoneyType)
+  const [settlementDirection, setSettlementDirection] = useState<'they_paid_me' | 'i_paid_them'>('they_paid_me')
   const [amount, setAmount] = useState('')
   const [category, setCategory] = useState<string>('Food')
   const [description, setDescription] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<'upi' | 'cash' | 'card'>('upi')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
 
-  // Money Given / Received specific fields & People integration
+  // Money Given / Received / Settlement specific fields & People integration
   const [people, setPeople] = useState<Person[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [selectedPersonId, setSelectedPersonId] = useState<string>(initialPersonId || '')
@@ -91,6 +92,14 @@ export function QuickAddModal({
   // Note state
   const [noteTitle, setNoteTitle] = useState('')
   const [noteContent, setNoteContent] = useState('')
+
+  // Sync moneyType and activeTab whenever the modal is (re)opened with new props
+  useEffect(() => {
+    if (isOpen) {
+      setMoneyType(initialMoneyType)
+      setActiveTab(initialTab)
+    }
+  }, [isOpen, initialMoneyType, initialTab])
 
   // Load People and Transactions when modal opens
   useEffect(() => {
@@ -164,17 +173,23 @@ export function QuickAddModal({
     return false
   })
 
-  const originalAmountTaken = personTransactions
+  // Money given/lent to this person (they borrowed from user)
+  const lentToPerson = personTransactions
     .filter((t) => t.type === 'given')
     .reduce((acc, t) => acc + Number(t.amount), 0)
 
-  const alreadyReceived = personTransactions
+  // Money received from this person (borrowed from them / or they repaid)
+  const receivedFromPerson = personTransactions
     .filter((t) => t.type === 'received')
     .reduce((acc, t) => acc + Number(t.amount), 0)
 
-  const currentBalanceBefore = originalAmountTaken - alreadyReceived
-  const amountBeingReceivedNum = parseFloat(amount) || 0
-  const remainingAmount = currentBalanceBefore - amountBeingReceivedNum
+  // Net: if > 0, they owe user; if < 0, user owes them
+  const currentNetBalance = lentToPerson - receivedFromPerson
+  const finalDisplayName = isAddingNewPerson
+    ? newPersonName.trim()
+    : selectedPerson
+    ? selectedPerson.name
+    : personName.trim()
 
   const handlePersonSelectChange = (val: string) => {
     if (val === '__new__') {
@@ -221,7 +236,7 @@ export function QuickAddModal({
         let finalPersonId: string | undefined = selectedPersonId || undefined
         let finalPersonName: string = personName.trim()
 
-        if (moneyType === 'given' || moneyType === 'received') {
+        if (moneyType === 'given' || moneyType === 'received' || moneyType === 'settlement') {
           if (isAddingNewPerson) {
             if (!newPersonName.trim()) {
               showToast.error('Please enter person name')
@@ -257,11 +272,36 @@ export function QuickAddModal({
           }
         }
 
+        let txType: 'expense' | 'given' | 'received' = 'expense'
+        let txCategory: string = category
+        let txDescription: string | undefined = description.trim() || undefined
+
+        if (moneyType === 'expense') {
+          txType = 'expense'
+          txCategory = category
+        } else if (moneyType === 'given') {
+          txType = 'given'
+          txCategory = 'Lent / Loan'
+          txDescription = description.trim() || `Lent money to ${finalPersonName}`
+        } else if (moneyType === 'received') {
+          txType = 'received'
+          txCategory = 'Borrowed / Loan'
+          txDescription = description.trim() || `Borrowed money from ${finalPersonName}`
+        } else if (moneyType === 'settlement') {
+          txType = settlementDirection === 'they_paid_me' ? 'received' : 'given'
+          txCategory = 'Settlement'
+          txDescription =
+            description.trim() ||
+            (settlementDirection === 'they_paid_me'
+              ? `${finalPersonName} paid back / settled`
+              : `Paid back / settled with ${finalPersonName}`)
+        }
+
         await transactionService.createTransaction({
-          type: moneyType,
+          type: txType,
           amount: parseFloat(amount),
-          category: moneyType === 'expense' ? category : 'N/A',
-          description: description.trim() || undefined,
+          category: txCategory,
+          description: txDescription,
           payment_method: paymentMethod,
           person_id: moneyType !== 'expense' ? finalPersonId : undefined,
           person_name: moneyType !== 'expense' ? finalPersonName : undefined,
@@ -274,8 +314,10 @@ export function QuickAddModal({
           moneyType === 'expense'
             ? 'Expense saved! 💸'
             : moneyType === 'given'
-            ? 'Money Given recorded! 🤝'
-            : 'Money Received recorded! 💰'
+            ? `Lent ₹${amount} to ${finalPersonName}! (${finalPersonName} owes you ₹${amount}) 🤝`
+            : moneyType === 'received'
+            ? `Borrowed ₹${amount} from ${finalPersonName}! (You owe ${finalPersonName} ₹${amount}) 💰`
+            : `Settlement with ${finalPersonName} recorded! ⚖️`
         showToast.success(successMsg)
       } else if (activeTab === 'attendance') {
         await attendanceService.markAttendance(attendanceStatus)
@@ -386,30 +428,149 @@ export function QuickAddModal({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-4 flex-1">
-          {/* TAB 1: MONEY (DYNAMIC 3 FORMS) */}
+          {/* TAB 1: MONEY */}
           {activeTab === 'money' && (
             <div className="space-y-4">
-              {/* Money Sub-tabs */}
-              <div className="grid grid-cols-3 rounded-xl p-1 bg-surface-100 dark:bg-surface-800 gap-1 border border-surface-200/60 dark:border-surface-700/60">
-                {[
-                  { id: 'expense', label: '💸 Expense' },
-                  { id: 'given', label: '🤝 Money Given' },
-                  { id: 'received', label: '💰 Received' },
-                ].map((type) => (
+              {/* "What happened?" Selector */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black uppercase tracking-wider text-surface-500 dark:text-surface-400">
+                    What happened?
+                  </label>
+                  <span className="text-[10px] font-bold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-950/60 px-2 py-0.5 rounded-full">
+                    Select One
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Option 1: I spent money */}
                   <button
-                    key={type.id}
                     type="button"
-                    onClick={() => setMoneyType(type.id as any)}
+                    onClick={() => setMoneyType('expense')}
                     className={cn(
-                      'py-2 px-1 text-xs font-bold rounded-lg transition-all text-center truncate',
-                      moneyType === type.id
-                        ? 'bg-white dark:bg-surface-700 text-primary-600 dark:text-primary-300 shadow-sm'
-                        : 'text-surface-500 hover:text-surface-900 dark:hover:text-white'
+                      'flex items-center gap-3 p-3 rounded-2xl border text-left transition-all cursor-pointer',
+                      moneyType === 'expense'
+                        ? 'bg-rose-50/90 dark:bg-rose-950/40 border-rose-500 dark:border-rose-600 ring-2 ring-rose-500/20 shadow-sm'
+                        : 'bg-surface-50 dark:bg-surface-800/60 border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
                     )}
                   >
-                    {type.label}
+                    <div
+                      className={cn(
+                        'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors',
+                        moneyType === 'expense'
+                          ? 'border-rose-600 bg-rose-600 text-white'
+                          : 'border-surface-400 dark:border-surface-500'
+                      )}
+                    >
+                      {moneyType === 'expense' && <div className="w-2 h-2 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-surface-900 dark:text-white flex items-center gap-1.5">
+                        <span>💸</span>
+                        <span>I spent money</span>
+                      </p>
+                      <p className="text-[10px] text-surface-500 dark:text-surface-400">
+                        Food, travel, laundry, hostel bills
+                      </p>
+                    </div>
                   </button>
-                ))}
+
+                  {/* Option 2: I lent money to someone */}
+                  <button
+                    type="button"
+                    onClick={() => setMoneyType('given')}
+                    className={cn(
+                      'flex items-center gap-3 p-3 rounded-2xl border text-left transition-all cursor-pointer',
+                      moneyType === 'given'
+                        ? 'bg-amber-50/90 dark:bg-amber-950/40 border-amber-500 dark:border-amber-600 ring-2 ring-amber-500/20 shadow-sm'
+                        : 'bg-surface-50 dark:bg-surface-800/60 border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors',
+                        moneyType === 'given'
+                          ? 'border-amber-600 bg-amber-600 text-white'
+                          : 'border-surface-400 dark:border-surface-500'
+                      )}
+                    >
+                      {moneyType === 'given' && <div className="w-2 h-2 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-surface-900 dark:text-white flex items-center gap-1.5">
+                        <span>🤝</span>
+                        <span>I lent money to someone</span>
+                      </p>
+                      <p className="text-[10px] text-amber-700 dark:text-amber-300 font-semibold">
+                        They borrowed → They owe you
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* Option 3: I borrowed money from someone */}
+                  <button
+                    type="button"
+                    onClick={() => setMoneyType('received')}
+                    className={cn(
+                      'flex items-center gap-3 p-3 rounded-2xl border text-left transition-all cursor-pointer',
+                      moneyType === 'received'
+                        ? 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-500 dark:border-emerald-600 ring-2 ring-emerald-500/20 shadow-sm'
+                        : 'bg-surface-50 dark:bg-surface-800/60 border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors',
+                        moneyType === 'received'
+                          ? 'border-emerald-600 bg-emerald-600 text-white'
+                          : 'border-surface-400 dark:border-surface-500'
+                      )}
+                    >
+                      {moneyType === 'received' && <div className="w-2 h-2 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-surface-900 dark:text-white flex items-center gap-1.5">
+                        <span>📥</span>
+                        <span>I borrowed money from someone</span>
+                      </p>
+                      <p className="text-[10px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                        You borrowed → You owe them
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* Option 4: I settled a debt */}
+                  <button
+                    type="button"
+                    onClick={() => setMoneyType('settlement')}
+                    className={cn(
+                      'flex items-center gap-3 p-3 rounded-2xl border text-left transition-all cursor-pointer',
+                      moneyType === 'settlement'
+                        ? 'bg-primary-50/90 dark:bg-primary-950/40 border-primary-500 dark:border-primary-600 ring-2 ring-primary-500/20 shadow-sm'
+                        : 'bg-surface-50 dark:bg-surface-800/60 border-surface-200 dark:border-surface-700 hover:border-surface-300 dark:hover:border-surface-600'
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors',
+                        moneyType === 'settlement'
+                          ? 'border-primary-600 bg-primary-600 text-white'
+                          : 'border-surface-400 dark:border-surface-500'
+                      )}
+                    >
+                      {moneyType === 'settlement' && <div className="w-2 h-2 rounded-full bg-white" />}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-surface-900 dark:text-white flex items-center gap-1.5">
+                        <span>⚖️</span>
+                        <span>I settled a debt</span>
+                      </p>
+                      <p className="text-[10px] text-primary-700 dark:text-primary-300 font-semibold">
+                        Clear an existing balance
+                      </p>
+                    </div>
+                  </button>
+                </div>
               </div>
 
               {/* FORM 1: EXPENSE */}
@@ -417,14 +578,14 @@ export function QuickAddModal({
                 <div className="space-y-3 animate-in fade-in duration-150">
                   <div>
                     <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                      Amount (₹) *
+                      Amount Spent (₹) *
                     </label>
                     <input
                       type="number"
                       placeholder="0.00"
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
-                      className="w-full text-2xl font-bold rounded-2xl px-4 py-3 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white focus:ring-2 focus:ring-primary-500 outline-none"
+                      className="w-full text-2xl font-bold rounded-2xl px-4 py-3 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white focus:ring-2 focus:ring-rose-500 outline-none"
                       autoFocus
                       required
                     />
@@ -459,7 +620,7 @@ export function QuickAddModal({
                       >
                         <option value="upi">UPI (GPay/PhonePe)</option>
                         <option value="cash">Cash</option>
-                        <option value="card">Card</option>
+                        <option value="card">Card / NetBanking</option>
                       </select>
                     </div>
                   </div>
@@ -482,21 +643,32 @@ export function QuickAddModal({
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g., Dinner, Auto fare, Books"
+                      placeholder="e.g., Dinner with roommates, Auto fare, Notebook"
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
                     />
                   </div>
+
+                  {/* Result Preview */}
+                  <div className="p-3.5 rounded-2xl bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/60">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-rose-700 dark:text-rose-400 block mb-0.5">
+                      Result
+                    </span>
+                    <p className="text-sm font-extrabold text-rose-900 dark:text-rose-200 flex items-center gap-1.5">
+                      <span>💸</span>
+                      <span>Spent ₹{amount ? Number(amount).toLocaleString() : '0'} on {category}</span>
+                    </p>
+                  </div>
                 </div>
               )}
 
-              {/* FORM 2: MONEY GIVEN / LENT */}
+              {/* FORM 2: MONEY LENT / GIVEN */}
               {moneyType === 'given' && (
                 <div className="space-y-3 animate-in fade-in duration-150">
                   <div>
                     <label className="block text-xs font-semibold text-surface-600 dark:text-surface-400 mb-1">
-                      Person Name *
+                      Person (Who borrowed from you?) *
                     </label>
                     <div className="space-y-2">
                       <select
@@ -504,7 +676,7 @@ export function QuickAddModal({
                         onChange={(e) => handlePersonSelectChange(e.target.value)}
                         className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white font-medium focus:ring-2 focus:ring-amber-500 outline-none"
                       >
-                        <option value="">[ Select Person ▼ ]</option>
+                        <option value="">[ Select Person / Friend ▼ ]</option>
                         {allPersonOptions.map((opt) => (
                           <option key={opt.id || opt.name} value={opt.id || opt.name}>
                             👤 {opt.name} {opt.phone ? `(${opt.phone})` : ''}
@@ -516,7 +688,7 @@ export function QuickAddModal({
                       {isAddingNewPerson && (
                         <input
                           type="text"
-                          placeholder="Enter new person name..."
+                          placeholder="Enter person name (e.g. Aryan)..."
                           value={newPersonName}
                           onChange={(e) => {
                             setNewPersonName(e.target.value)
@@ -530,9 +702,25 @@ export function QuickAddModal({
                     </div>
                   </div>
 
+                  {/* Current Person Balance Status (if exists) */}
+                  {(selectedPersonId || personName) && !isAddingNewPerson && currentNetBalance !== 0 && (
+                    <div className="p-2.5 rounded-xl bg-surface-100 dark:bg-surface-800/80 text-[11px] flex items-center justify-between border border-surface-200/80 dark:border-surface-700">
+                      <span className="text-surface-500">Current status with {finalDisplayName}:</span>
+                      {currentNetBalance > 0 ? (
+                        <span className="font-extrabold text-amber-700 dark:text-amber-300">
+                          Already owes you ₹{currentNetBalance.toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="font-extrabold text-emerald-700 dark:text-emerald-300">
+                          You owe them ₹{Math.abs(currentNetBalance).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                      Amount Given (₹) *
+                      Amount Lent (₹) *
                     </label>
                     <input
                       type="number"
@@ -547,7 +735,7 @@ export function QuickAddModal({
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                        Date Given *
+                        Date Lent *
                       </label>
                       <input
                         type="date"
@@ -574,19 +762,6 @@ export function QuickAddModal({
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                        Purpose / Reason
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Personal, Emergency"
-                        value={purpose}
-                        onChange={(e) => setPurpose(e.target.value)}
-                        className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
                         Payment Method
                       </label>
                       <select
@@ -594,34 +769,68 @@ export function QuickAddModal({
                         onChange={(e) => setPaymentMethod(e.target.value as any)}
                         className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
                       >
-                        <option value="upi">UPI</option>
+                        <option value="upi">UPI (GPay / PhonePe)</option>
                         <option value="cash">Cash</option>
-                        <option value="card">Card</option>
+                        <option value="card">Bank / Card</option>
                       </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+                        Purpose / Reason
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Canteen bill, Emergency"
+                        value={purpose}
+                        onChange={(e) => setPurpose(e.target.value)}
+                        className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
+                      />
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                      Description / Note
+                      Optional Note
                     </label>
                     <input
                       type="text"
-                      placeholder="Optional notes..."
+                      placeholder="Optional notes or details..."
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
                     />
                   </div>
+
+                  {/* DYNAMIC RESULT PREVIEW CARD (LENT / GIVEN) */}
+                  <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700 space-y-1.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-amber-800 dark:text-amber-300">
+                        Result
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-200/80 dark:bg-amber-900/60 text-amber-900 dark:text-amber-200">
+                        Status: Pending
+                      </span>
+                    </div>
+                    <p className="text-base font-black text-amber-950 dark:text-amber-100 flex items-center gap-2">
+                      <span>🤝</span>
+                      <span>
+                        {finalDisplayName || 'Person'} owes you ₹{amount ? Number(amount).toLocaleString() : '0'}
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 font-medium">
+                      Direction: You gave money → {finalDisplayName || 'They'} borrowed from you → {finalDisplayName || 'They'} owe you.
+                    </p>
+                  </div>
                 </div>
               )}
 
-              {/* FORM 3: MONEY RECEIVED / BORROWED */}
+              {/* FORM 3: MONEY BORROWED / TAKEN */}
               {moneyType === 'received' && (
                 <div className="space-y-3 animate-in fade-in duration-150">
                   <div>
                     <label className="block text-xs font-semibold text-surface-600 dark:text-surface-400 mb-1">
-                      Person Name *
+                      Person (Who did you borrow from?) *
                     </label>
                     <div className="space-y-2">
                       <select
@@ -629,7 +838,7 @@ export function QuickAddModal({
                         onChange={(e) => handlePersonSelectChange(e.target.value)}
                         className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
                       >
-                        <option value="">[ Select Person ▼ ]</option>
+                        <option value="">[ Select Person / Friend ▼ ]</option>
                         {allPersonOptions.map((opt) => (
                           <option key={opt.id || opt.name} value={opt.id || opt.name}>
                             👤 {opt.name} {opt.phone ? `(${opt.phone})` : ''}
@@ -641,7 +850,7 @@ export function QuickAddModal({
                       {isAddingNewPerson && (
                         <input
                           type="text"
-                          placeholder="Enter new person name..."
+                          placeholder="Enter person name (e.g. Dev)..."
                           value={newPersonName}
                           onChange={(e) => {
                             setNewPersonName(e.target.value)
@@ -655,9 +864,25 @@ export function QuickAddModal({
                     </div>
                   </div>
 
+                  {/* Current Person Balance Status (if exists) */}
+                  {(selectedPersonId || personName) && !isAddingNewPerson && currentNetBalance !== 0 && (
+                    <div className="p-2.5 rounded-xl bg-surface-100 dark:bg-surface-800/80 text-[11px] flex items-center justify-between border border-surface-200/80 dark:border-surface-700">
+                      <span className="text-surface-500">Current status with {finalDisplayName}:</span>
+                      {currentNetBalance < 0 ? (
+                        <span className="font-extrabold text-rose-700 dark:text-rose-300">
+                          You already owe them ₹{Math.abs(currentNetBalance).toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="font-extrabold text-amber-700 dark:text-amber-300">
+                          They owe you ₹{currentNetBalance.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                      Amount Received (₹) *
+                      Amount Borrowed (₹) *
                     </label>
                     <input
                       type="number"
@@ -672,7 +897,7 @@ export function QuickAddModal({
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                        Date Received *
+                        Date Borrowed *
                       </label>
                       <input
                         type="date"
@@ -699,14 +924,188 @@ export function QuickAddModal({
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+                        Payment Method
+                      </label>
+                      <select
+                        value={paymentMethod}
+                        onChange={(e) => setPaymentMethod(e.target.value as any)}
+                        className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="upi">UPI (GPay / PhonePe)</option>
+                        <option value="card">Bank / Card</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
                         Purpose / Reason
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. Food, College fees, Mess"
+                        placeholder="e.g. Mess fees, Train ticket"
                         value={purpose}
                         onChange={(e) => setPurpose(e.target.value)}
                         className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+                      Optional Note
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Optional notes or details..."
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
+                    />
+                  </div>
+
+                  {/* DYNAMIC RESULT PREVIEW CARD (BORROWED / TAKEN) */}
+                  <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-700 space-y-1.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                        Result
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-200/80 dark:bg-emerald-900/60 text-emerald-900 dark:text-emerald-200">
+                        Status: Pending
+                      </span>
+                    </div>
+                    <p className="text-base font-black text-emerald-950 dark:text-emerald-100 flex items-center gap-2">
+                      <span>💰</span>
+                      <span>
+                        You owe {finalDisplayName || 'Friend'} ₹{amount ? Number(amount).toLocaleString() : '0'}
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-emerald-800/90 dark:text-emerald-300/90 font-medium">
+                      Direction: You borrowed money from {finalDisplayName || 'them'} → You owe {finalDisplayName || 'them'}.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* FORM 4: SETTLED A DEBT */}
+              {moneyType === 'settlement' && (
+                <div className="space-y-3 animate-in fade-in duration-150">
+                  <div>
+                    <label className="block text-xs font-semibold text-surface-600 dark:text-surface-400 mb-1">
+                      Person (Who are you settling with?) *
+                    </label>
+                    <select
+                      value={isAddingNewPerson ? '__new__' : (selectedPersonId || personName)}
+                      onChange={(e) => handlePersonSelectChange(e.target.value)}
+                      className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white font-medium focus:ring-2 focus:ring-primary-500 outline-none"
+                    >
+                      <option value="">[ Select Person / Friend ▼ ]</option>
+                      {allPersonOptions.map((opt) => (
+                        <option key={opt.id || opt.name} value={opt.id || opt.name}>
+                          👤 {opt.name} {opt.phone ? `(${opt.phone})` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Current Balance Banner */}
+                  {(selectedPersonId || personName) && (
+                    <div className="p-3 rounded-2xl bg-surface-100 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div>
+                        <span className="text-[11px] text-surface-500 block">Current Outstanding Balance:</span>
+                        {currentNetBalance > 0 ? (
+                          <span className="font-black text-sm text-amber-700 dark:text-amber-300">
+                            {finalDisplayName} owes you ₹{currentNetBalance.toLocaleString()}
+                          </span>
+                        ) : currentNetBalance < 0 ? (
+                          <span className="font-black text-sm text-rose-700 dark:text-rose-300">
+                            You owe {finalDisplayName} ₹{Math.abs(currentNetBalance).toLocaleString()}
+                          </span>
+                        ) : (
+                          <span className="font-bold text-xs text-surface-500">
+                            All settled up ✓ (Balance: ₹0)
+                          </span>
+                        )}
+                      </div>
+
+                      {currentNetBalance !== 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAmount(String(Math.abs(currentNetBalance)))
+                            if (currentNetBalance > 0) {
+                              setSettlementDirection('they_paid_me')
+                            } else {
+                              setSettlementDirection('i_paid_them')
+                            }
+                          }}
+                          className="px-2.5 py-1.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-white text-[11px] font-bold transition-all shrink-0 cursor-pointer"
+                        >
+                          ⚡ Settle Full ₹{Math.abs(currentNetBalance).toLocaleString()}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Direction of Settlement */}
+                  <div>
+                    <label className="block text-xs font-semibold text-surface-600 dark:text-surface-400 mb-1.5">
+                      Settlement Direction *
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSettlementDirection('they_paid_me')}
+                        className={cn(
+                          'p-2.5 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer',
+                          settlementDirection === 'they_paid_me'
+                            ? 'bg-amber-100 border-amber-500 text-amber-900 dark:bg-amber-950/70 dark:text-amber-200 dark:border-amber-600'
+                            : 'bg-surface-50 dark:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400'
+                        )}
+                      >
+                        📥 {finalDisplayName || 'They'} paid me back
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSettlementDirection('i_paid_them')}
+                        className={cn(
+                          'p-2.5 rounded-xl border text-xs font-bold transition-all text-center cursor-pointer',
+                          settlementDirection === 'i_paid_them'
+                            ? 'bg-emerald-100 border-emerald-500 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-200 dark:border-emerald-600'
+                            : 'bg-surface-50 dark:bg-surface-800 border-surface-200 dark:border-surface-700 text-surface-600 dark:text-surface-400'
+                        )}
+                      >
+                        📤 I paid {finalDisplayName || 'them'} back
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+                      Settlement Amount (₹) *
+                    </label>
+                    <input
+                      type="number"
+                      placeholder="0.00"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      className="w-full text-2xl font-bold rounded-2xl px-4 py-3 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white focus:ring-2 focus:ring-primary-500 outline-none"
+                      required
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
+                        Settlement Date *
+                      </label>
+                      <input
+                        type="date"
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
+                        required
                       />
                     </div>
 
@@ -719,80 +1118,49 @@ export function QuickAddModal({
                         onChange={(e) => setPaymentMethod(e.target.value as any)}
                         className="w-full rounded-xl px-3 py-2 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
                       >
-                        <option value="upi">UPI</option>
+                        <option value="upi">UPI (GPay / PhonePe)</option>
                         <option value="cash">Cash</option>
-                        <option value="card">Card</option>
+                        <option value="card">Bank / Card</option>
                       </select>
                     </div>
                   </div>
 
                   <div>
                     <label className="block text-xs font-medium text-surface-600 dark:text-surface-400 mb-1">
-                      Description / Note
+                      Optional Note
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g., Paid back partially"
+                      placeholder="e.g. Settle last week's expenses"
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       className="w-full rounded-xl px-3 py-2.5 text-sm bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 text-surface-900 dark:text-white"
                     />
                   </div>
 
-                  {/* Live Person Balance Breakdown Card */}
-                  {(selectedPersonId || (isAddingNewPerson && newPersonName.trim()) || personName) && (
-                    <div className="rounded-2xl p-3.5 bg-surface-50 dark:bg-surface-800/90 border border-surface-200 dark:border-surface-700 space-y-2 text-xs animate-in fade-in duration-200">
-                      <p className="font-bold text-surface-900 dark:text-white flex items-center justify-between border-b border-surface-200 dark:border-surface-700 pb-1.5">
-                        <span>Selected Person:</span>
-                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold text-sm">
-                          {selectedPerson ? selectedPerson.name : (newPersonName || personName || 'Selected Person')}
-                        </span>
-                      </p>
-                      <div className="space-y-1.5 pt-0.5 text-surface-600 dark:text-surface-300">
-                        <div className="flex justify-between">
-                          <span>Original Amount Taken:</span>
-                          <span className="font-semibold text-surface-900 dark:text-white">₹{originalAmountTaken.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Already Received:</span>
-                          <span className="font-semibold text-surface-900 dark:text-white">₹{alreadyReceived.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between font-semibold text-surface-700 dark:text-surface-200 pt-1 border-t border-dashed border-surface-200 dark:border-surface-700">
-                          <span>Current Balance:</span>
-                          <span>₹{currentBalanceBefore.toLocaleString()}</span>
-                        </div>
-                        <div className="flex justify-between font-semibold text-emerald-600 dark:text-emerald-400">
-                          <span>Amount Being Received:</span>
-                          <span>₹{amountBeingReceivedNum.toLocaleString()}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between pt-2 border-t border-surface-200 dark:border-surface-700">
-                        <span className="font-bold text-surface-900 dark:text-white">Remaining Amount:</span>
-                        <span className={cn(
-                          "px-3 py-1 rounded-xl text-sm font-extrabold shadow-xs",
-                          remainingAmount <= 0
-                            ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700"
-                            : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
-                        )}>
-                          ₹{Math.max(0, remainingAmount).toLocaleString()}
-                        </span>
-                      </div>
+                  {/* DYNAMIC RESULT PREVIEW CARD (SETTLEMENT) */}
+                  <div className="p-4 rounded-2xl bg-primary-50 dark:bg-primary-950/40 border border-primary-300 dark:border-primary-700 space-y-1.5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-primary-800 dark:text-primary-300">
+                        Result
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary-200/80 dark:bg-primary-900/60 text-primary-900 dark:text-primary-200">
+                        Status: Settling Debt
+                      </span>
                     </div>
-                  )}
-
-                  {/* Remaining Amount Box */}
-                  <div className="rounded-2xl p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                        Remaining Amount
-                      </p>
-                      <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
-                        Total Taken − Total Received
-                      </p>
-                    </div>
-                    <span className="text-xl font-black text-emerald-700 dark:text-emerald-300">
-                      ₹{(selectedPersonId || personName) ? Math.max(0, remainingAmount).toLocaleString() : '0'}
-                    </span>
+                    <p className="text-base font-black text-primary-950 dark:text-primary-100 flex items-center gap-2">
+                      <span>⚖️</span>
+                      <span>
+                        {settlementDirection === 'they_paid_me'
+                          ? `${finalDisplayName || 'Friend'} paid you back ₹${amount ? Number(amount).toLocaleString() : '0'}`
+                          : `You paid back ₹${amount ? Number(amount).toLocaleString() : '0'} to ${finalDisplayName || 'Friend'}`}
+                      </span>
+                    </p>
+                    <p className="text-[11px] text-primary-800/90 dark:text-primary-300/90 font-medium">
+                      {settlementDirection === 'they_paid_me'
+                        ? `Clears what ${finalDisplayName || 'they'} owe you.`
+                        : `Clears what you owe ${finalDisplayName || 'them'}.`}
+                    </p>
                   </div>
                 </div>
               )}
@@ -1043,10 +1411,12 @@ export function QuickAddModal({
                   ? 'Saving...'
                   : activeTab === 'money'
                   ? moneyType === 'expense'
-                    ? 'Save Expense'
+                    ? 'Save Expense 💸'
                     : moneyType === 'given'
-                    ? 'Save Money Given'
-                    : 'Save Money Received'
+                    ? `Record Money Lent 🤝`
+                    : moneyType === 'received'
+                    ? `Record Money Borrowed 💰`
+                    : 'Record Settlement ⚖️'
                   : 'Save Item'}
               </span>
             </button>

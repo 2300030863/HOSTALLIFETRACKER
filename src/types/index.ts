@@ -187,7 +187,7 @@ export const EXPENSE_CATEGORIES = [
 export type ExpenseCategory = typeof EXPENSE_CATEGORIES[number]
 
 // ===== Notification Types =====
-export type NotificationType = 'attendance' | 'reminder' | 'system'
+export type NotificationType = 'attendance' | 'reminder' | 'placement' | 'system'
 
 export interface AppNotification {
   id: string
@@ -199,4 +199,37 @@ export interface AppNotification {
   notification_key: string
   read: boolean
   created_at: string
+}
+
+// ===== Placement Application Types =====
+export type PlacementStatus =
+  | 'registered'
+  | 'applied'
+  | 'test'
+  | 'interview'
+  | 'selected'
+  | 'rejected'
+  | 'withdrawn'
+
+export interface PlacementApplication {
+  id: string
+  user_id: string
+  company_name: string
+  job_role: string
+  application_date?: string | null
+  application_deadline?: string | null
+  status: PlacementStatus
+  job_url?: string | null
+  location?: string | null
+  ctc?: string | null
+  eligibility?: string | null
+  test_date?: string | null
+  interview_date?: string | null
+  follow_up_date?: string | null
+  contact_name?: string | null
+  contact_email?: string | null
+  resume_version?: string | null
+  notes?: string | null
+  created_at: string
+  updated_at: string
 }

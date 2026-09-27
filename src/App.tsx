@@ -17,6 +17,7 @@ const ActivitiesPage = lazy(() => import('@/pages/ActivitiesPage'))
 const RemindersPage = lazy(() => import('@/pages/RemindersPage'))
 const GoalsPage = lazy(() => import('@/pages/GoalsPage'))
 const ReportsPage = lazy(() => import('@/pages/ReportsPage'))
+const PlacementsPage = lazy(() => import('@/pages/PlacementsPage'))
 
 const MoneySummaryPage = lazy(() => import('@/pages/MoneySummaryPage'))
 
@@ -75,6 +76,7 @@ function AppRoutes() {
         <Route path="/reminders" element={<PrivateRoute><RemindersPage /></PrivateRoute>} />
         <Route path="/goals" element={<PrivateRoute><GoalsPage /></PrivateRoute>} />
         <Route path="/reports" element={<PrivateRoute><ReportsPage /></PrivateRoute>} />
+        <Route path="/placements" element={<PrivateRoute><PlacementsPage /></PrivateRoute>} />
 
         {/* Catch-all redirect */}
         <Route path="*" element={<Navigate to="/" replace />} />

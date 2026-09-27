@@ -19,6 +19,7 @@ import type {
   Person,
   AppNotification,
   NotificationType,
+  PlacementApplication,
 } from '@/types'
 
 // Helper for local storage backup when offline / initial demo
@@ -31,6 +32,7 @@ const STORAGE_KEYS = {
   habits: 'ht_habits',
   habitLogs: 'ht_habit_logs',
   notes: 'ht_notes',
+  placements: 'ht_placements',
   appStartDate: 'ht_app_start_date',
 }
 
@@ -1673,5 +1675,487 @@ export const notificationService = {
     } catch (e) {
       console.error('Failed to clean old notifications:', e)
     }
+  },
+}
+
+// =====================================
+// PLACEMENT / JOB APPLICATIONS SERVICE
+// =====================================
+
+const INITIAL_PLACEMENTS: PlacementApplication[] = [
+  {
+    id: 'placement-tcs-1',
+    user_id: 'local-user',
+    company_name: 'TCS',
+    job_role: 'Software Engineer',
+    application_date: '2026-09-27',
+    application_deadline: '2026-10-02',
+    status: 'applied',
+    job_url: 'https://ibegin.tcs.com/iBegin/',
+    location: 'Bengaluru / Hybrid',
+    ctc: '₹7.5 LPA',
+    eligibility: 'CGPA >= 7.0, B.Tech CSE/IT/ECE, No backlogs',
+    test_date: null,
+    interview_date: null,
+    follow_up_date: '2026-10-04T10:00:00.000Z',
+    contact_name: 'Campus Recruitment Team',
+    contact_email: 'campus.recruitment@tcs.com',
+    resume_version: 'Resume_SDE_v2.pdf',
+    notes: 'Submitted via National Qualifier Test (NQT) portal. Awaiting shortlist confirmation.',
+    created_at: new Date('2026-09-27T08:00:00Z').toISOString(),
+    updated_at: new Date('2026-09-27T08:00:00Z').toISOString(),
+  },
+  {
+    id: 'placement-infy-2',
+    user_id: 'local-user',
+    company_name: 'Infosys',
+    job_role: 'System Engineer Specialist',
+    application_date: '2026-09-25',
+    application_deadline: '2026-09-28',
+    status: 'interview',
+    job_url: 'https://career.infosys.com',
+    location: 'Pune / Mysore',
+    ctc: '₹9.2 LPA',
+    eligibility: '60% throughout 10th, 12th & Degree',
+    test_date: '2026-09-28T10:00:00.000Z',
+    interview_date: '2026-09-30T14:00:00.000Z',
+    follow_up_date: '2026-10-02T10:00:00.000Z',
+    contact_name: 'Rohit Sharma (Technical HR)',
+    contact_email: 'rohit.s@infosys.com',
+    resume_version: 'Resume_FullStack_v3.pdf',
+    notes: 'Technical Interview round scheduled on Microsoft Teams. Revise DBMS, OOPs and React hooks.',
+    created_at: new Date('2026-09-25T11:00:00Z').toISOString(),
+    updated_at: new Date('2026-09-27T09:30:00Z').toISOString(),
+  },
+  {
+    id: 'placement-abc-3',
+    user_id: 'local-user',
+    company_name: 'ABC Technologies',
+    job_role: 'Software Engineer',
+    application_date: '2026-09-27',
+    application_deadline: '2026-09-29',
+    status: 'test',
+    job_url: 'https://abctech.example.com/careers',
+    location: 'Remote / Bengaluru',
+    ctc: '₹12.0 LPA',
+    eligibility: 'CGPA >= 7.5, Good coding fundamentals',
+    test_date: '2026-09-30T10:00:00.000Z',
+    interview_date: null,
+    follow_up_date: '2026-10-04T10:00:00.000Z',
+    contact_name: 'Deepa Verma (Talent Acquisition)',
+    contact_email: 'd.verma@abctech.example.com',
+    resume_version: 'Resume_SDE_v2.pdf',
+    notes: 'HackerEarth online assessment: 2 coding questions + 20 MCQs on DSA.',
+    created_at: new Date('2026-09-27T10:00:00Z').toISOString(),
+    updated_at: new Date('2026-09-27T10:00:00Z').toISOString(),
+  }
+]
+
+export const placementService = {
+  /**
+   * Helper: Automatically generate and schedule reminders for placement events
+   */
+  async createPlacementReminders(placement: PlacementApplication): Promise<void> {
+    try {
+      const { company_name, job_role, test_date, interview_date, follow_up_date, application_deadline } = placement
+
+      // 1. Online Test Reminders
+      if (test_date) {
+        const testD = new Date(test_date)
+        if (!isNaN(testD.getTime())) {
+          const testHour = String(testD.getHours()).padStart(2, '0')
+          const testMin = String(testD.getMinutes()).padStart(2, '0')
+
+          // 1 hour before test
+          const oneHrBefore = new Date(testD.getTime() - 60 * 60 * 1000)
+          const oneHrDateStr = oneHrBefore.toISOString().slice(0, 10)
+          const oneHrTimeStr = `${String(oneHrBefore.getHours()).padStart(2, '0')}:${String(oneHrBefore.getMinutes()).padStart(2, '0')}`
+
+          await reminderService.createReminder({
+            title: `🔔 ${company_name} Online Test (Starts in 1 hour)`,
+            description: `Your online test for ${job_role} starts at ${testHour}:${testMin}. Prepare your camera, mic and ID!`,
+            reminder_date: oneHrDateStr,
+            reminder_time: oneHrTimeStr,
+            priority: 'high',
+            repeat_type: 'once',
+          })
+        }
+      }
+
+      // 2. Interview Reminders
+      if (interview_date) {
+        const intD = new Date(interview_date)
+        if (!isNaN(intD.getTime())) {
+          const intHour = String(intD.getHours()).padStart(2, '0')
+          const intMin = String(intD.getMinutes()).padStart(2, '0')
+
+          const oneHrBefore = new Date(intD.getTime() - 60 * 60 * 1000)
+          const oneHrDateStr = oneHrBefore.toISOString().slice(0, 10)
+          const oneHrTimeStr = `${String(oneHrBefore.getHours()).padStart(2, '0')}:${String(oneHrBefore.getMinutes()).padStart(2, '0')}`
+
+          await reminderService.createReminder({
+            title: `🎯 ${company_name} Interview (Starts in 1 hour)`,
+            description: `Interview for ${job_role} starts at ${intHour}:${intMin}. Review your resume and company background!`,
+            reminder_date: oneHrDateStr,
+            reminder_time: oneHrTimeStr,
+            priority: 'high',
+            repeat_type: 'once',
+          })
+        }
+      }
+
+      // 3. Follow-up Reminders
+      if (follow_up_date) {
+        const folD = new Date(follow_up_date)
+        if (!isNaN(folD.getTime())) {
+          const dateStr = folD.toISOString().slice(0, 10)
+          await reminderService.createReminder({
+            title: `📅 ${company_name} Follow-up Today`,
+            description: `You planned to check in and follow up on your ${job_role} application with ${company_name}.`,
+            reminder_date: dateStr,
+            reminder_time: '10:00',
+            priority: 'medium',
+            repeat_type: 'once',
+          })
+        }
+      }
+
+      // 4. Application Deadline Reminders
+      if (application_deadline) {
+        const deadD = new Date(application_deadline)
+        if (!isNaN(deadD.getTime())) {
+          const dateStr = deadD.toISOString().slice(0, 10)
+          await reminderService.createReminder({
+            title: `⚠️ ${company_name} Deadline Today`,
+            description: `Today is the final deadline to submit your application for ${job_role} at ${company_name}.`,
+            reminder_date: dateStr,
+            reminder_time: '09:00',
+            priority: 'high',
+            repeat_type: 'once',
+          })
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to auto-create placement reminders:', err)
+    }
+  },
+
+  /**
+   * Fetch all placement applications.
+   * Pulls from Supabase with fallback to local storage.
+   */
+  async getAllPlacements(): Promise<PlacementApplication[]> {
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (userData?.user) {
+        const { data, error } = await supabase
+          .from('placement_applications')
+          .select('*')
+          .eq('user_id', userData.user.id)
+          .order('created_at', { ascending: false })
+
+        if (!error && data !== null) {
+          if (data.length === 0) {
+            // Seed initial demo data for new user in local storage
+            const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+            if (local.length === 0) {
+              setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
+              return INITIAL_PLACEMENTS
+            }
+            return local
+          }
+          setLocal(STORAGE_KEYS.placements, data as PlacementApplication[])
+          return data as PlacementApplication[]
+        }
+      }
+    } catch {
+      // Fallback
+    }
+
+    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+    if (local.length === 0) {
+      setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
+      return INITIAL_PLACEMENTS
+    }
+    return local
+  },
+
+  /**
+   * Create a new placement application
+   */
+  async createPlacement(
+    payload: Omit<PlacementApplication, 'id' | 'user_id' | 'created_at' | 'updated_at'>,
+    autoCreateReminders = true
+  ): Promise<PlacementApplication> {
+    const now = new Date().toISOString()
+    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+
+    const newRecord: PlacementApplication = {
+      id: crypto.randomUUID(),
+      user_id: 'local-user',
+      ...payload,
+      created_at: now,
+      updated_at: now,
+    }
+
+    local.unshift(newRecord)
+    setLocal(STORAGE_KEYS.placements, local)
+
+    let createdRecord = newRecord
+
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (userData?.user) {
+        const { data, error } = await supabase
+          .from('placement_applications')
+          .insert({
+            user_id: userData.user.id,
+            company_name: payload.company_name,
+            job_role: payload.job_role,
+            application_date: payload.application_date || null,
+            application_deadline: payload.application_deadline || null,
+            status: payload.status,
+            job_url: payload.job_url || null,
+            location: payload.location || null,
+            ctc: payload.ctc || null,
+            eligibility: payload.eligibility || null,
+            test_date: payload.test_date || null,
+            interview_date: payload.interview_date || null,
+            follow_up_date: payload.follow_up_date || null,
+            contact_name: payload.contact_name || null,
+            contact_email: payload.contact_email || null,
+            resume_version: payload.resume_version || null,
+            notes: payload.notes || null,
+          })
+          .select()
+          .single()
+
+        if (!error && data) {
+          createdRecord = data as PlacementApplication
+          const updatedLocal = local.map((p) => (p.id === newRecord.id ? createdRecord : p))
+          setLocal(STORAGE_KEYS.placements, updatedLocal)
+        }
+      }
+    } catch (e) {
+      console.warn('Supabase placement insert failed, saved locally:', e)
+    }
+
+    if (autoCreateReminders) {
+      await this.createPlacementReminders(createdRecord)
+    }
+
+    return createdRecord
+  },
+
+  /**
+   * Update an existing placement application
+   */
+  async updatePlacement(
+    id: string,
+    payload: Partial<PlacementApplication>,
+    autoCreateReminders = false
+  ): Promise<PlacementApplication> {
+    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+    const index = local.findIndex((p) => p.id === id)
+    const now = new Date().toISOString()
+
+    const updatedItem: PlacementApplication = {
+      ...(index >= 0 ? local[index] : ({} as PlacementApplication)),
+      ...payload,
+      id,
+      updated_at: now,
+    } as PlacementApplication
+
+    if (index >= 0) {
+      local[index] = updatedItem
+    } else {
+      local.unshift(updatedItem)
+    }
+    setLocal(STORAGE_KEYS.placements, local)
+
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (userData?.user) {
+        const { data, error } = await supabase
+          .from('placement_applications')
+          .update({
+            company_name: payload.company_name,
+            job_role: payload.job_role,
+            application_date: payload.application_date,
+            application_deadline: payload.application_deadline,
+            status: payload.status,
+            job_url: payload.job_url,
+            location: payload.location,
+            ctc: payload.ctc,
+            eligibility: payload.eligibility,
+            test_date: payload.test_date,
+            interview_date: payload.interview_date,
+            follow_up_date: payload.follow_up_date,
+            contact_name: payload.contact_name,
+            contact_email: payload.contact_email,
+            resume_version: payload.resume_version,
+            notes: payload.notes,
+            updated_at: now,
+          })
+          .eq('id', id)
+          .select()
+          .single()
+
+        if (!error && data) {
+          const finalItem = data as PlacementApplication
+          local[index] = finalItem
+          setLocal(STORAGE_KEYS.placements, local)
+          if (autoCreateReminders) {
+            await this.createPlacementReminders(finalItem)
+          }
+          return finalItem
+        }
+      }
+    } catch (e) {
+      console.warn('Supabase placement update failed, saved locally:', e)
+    }
+
+    if (autoCreateReminders) {
+      await this.createPlacementReminders(updatedItem)
+    }
+
+    return updatedItem
+  },
+
+  /**
+   * Delete a placement application
+   */
+  async deletePlacement(id: string): Promise<boolean> {
+    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+    const filtered = local.filter((p) => p.id !== id)
+    setLocal(STORAGE_KEYS.placements, filtered)
+
+    try {
+      const { data: userData } = await supabase.auth.getUser()
+      if (userData?.user) {
+        await supabase.from('placement_applications').delete().eq('id', id)
+      }
+    } catch (e) {
+      console.warn('Supabase placement delete failed, removed locally:', e)
+    }
+
+    return true
+  },
+
+  /**
+   * Get placement stats breakdown
+   */
+  async getPlacementStats() {
+    const list = await this.getAllPlacements()
+    return {
+      total: list.length,
+      registered: list.filter((p) => p.status === 'registered').length,
+      applied: list.filter((p) => p.status === 'applied').length,
+      test: list.filter((p) => p.status === 'test').length,
+      interview: list.filter((p) => p.status === 'interview').length,
+      selected: list.filter((p) => p.status === 'selected').length,
+      rejected: list.filter((p) => p.status === 'rejected').length,
+      withdrawn: list.filter((p) => p.status === 'withdrawn').length,
+    }
+  },
+
+  /**
+   * Extract upcoming events sorted chronologically (tests, interviews, deadlines, follow-ups)
+   */
+  async getUpcomingEvents(): Promise<
+    Array<{
+      id: string
+      company: string
+      role: string
+      type: 'test' | 'interview' | 'deadline' | 'follow_up'
+      title: string
+      dateStr: string
+      dateObj: Date
+      time?: string
+    }>
+  > {
+    const list = await this.getAllPlacements()
+    const now = new Date()
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+    const events: Array<{
+      id: string
+      company: string
+      role: string
+      type: 'test' | 'interview' | 'deadline' | 'follow_up'
+      title: string
+      dateStr: string
+      dateObj: Date
+      time?: string
+    }> = []
+
+    list.forEach((p) => {
+      // 1. Online Test
+      if (p.test_date) {
+        const d = new Date(p.test_date)
+        if (!isNaN(d.getTime()) && d.getTime() >= todayMidnight) {
+          events.push({
+            id: `${p.id}-test`,
+            company: p.company_name,
+            role: p.job_role,
+            type: 'test',
+            title: 'Online Assessment',
+            dateStr: p.test_date.slice(0, 10),
+            dateObj: d,
+            time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+          })
+        }
+      }
+
+      // 2. Interview
+      if (p.interview_date) {
+        const d = new Date(p.interview_date)
+        if (!isNaN(d.getTime()) && d.getTime() >= todayMidnight) {
+          events.push({
+            id: `${p.id}-interview`,
+            company: p.company_name,
+            role: p.job_role,
+            type: 'interview',
+            title: 'Interview',
+            dateStr: p.interview_date.slice(0, 10),
+            dateObj: d,
+            time: `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`,
+          })
+        }
+      }
+
+      // 3. Deadline
+      if (p.application_deadline) {
+        const d = new Date(`${p.application_deadline}T23:59:59`)
+        if (!isNaN(d.getTime()) && d.getTime() >= todayMidnight) {
+          events.push({
+            id: `${p.id}-deadline`,
+            company: p.company_name,
+            role: p.job_role,
+            type: 'deadline',
+            title: 'Application Deadline',
+            dateStr: p.application_deadline,
+            dateObj: d,
+          })
+        }
+      }
+
+      // 4. Follow-up
+      if (p.follow_up_date) {
+        const d = new Date(p.follow_up_date)
+        if (!isNaN(d.getTime()) && d.getTime() >= todayMidnight) {
+          events.push({
+            id: `${p.id}-followup`,
+            company: p.company_name,
+            role: p.job_role,
+            type: 'follow_up',
+            title: 'Follow-up Check',
+            dateStr: p.follow_up_date.slice(0, 10),
+            dateObj: d,
+          })
+        }
+      }
+    })
+
+    return events.sort((a, b) => a.dateObj.getTime() - b.dateObj.getTime())
   },
 }

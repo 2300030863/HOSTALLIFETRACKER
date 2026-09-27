@@ -291,7 +291,7 @@ create policy "Users can CRUD own notes" on public.notes for all using (auth.uid
 create table if not exists public.notifications (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references auth.users on delete cascade not null,
-  type text not null check (type in ('attendance', 'reminder', 'system')),
+  type text not null check (type in ('attendance', 'reminder', 'placement', 'system')),
   title text not null,
   message text not null,
   scheduled_at timestamptz not null,
@@ -317,3 +317,42 @@ create policy "Users can update own notifications" on public.notifications for u
 
 drop policy if exists "Users can delete own notifications" on public.notifications;
 create policy "Users can delete own notifications" on public.notifications for delete using (auth.uid() = user_id);
+
+-- ============================================
+-- 12. PLACEMENT APPLICATIONS TABLE
+-- ============================================
+create table if not exists public.placement_applications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  company_name text not null,
+  job_role text not null,
+  application_date date,
+  application_deadline date,
+  status text not null default 'registered' check (status in ('registered', 'applied', 'test', 'interview', 'selected', 'rejected', 'withdrawn')),
+  job_url text,
+  location text,
+  ctc text,
+  eligibility text,
+  test_date timestamptz,
+  interview_date timestamptz,
+  follow_up_date timestamptz,
+  contact_name text,
+  contact_email text,
+  resume_version text,
+  notes text,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_placement_applications_user_id on public.placement_applications(user_id);
+create index if not exists idx_placement_applications_status on public.placement_applications(status);
+
+alter table public.placement_applications enable row level security;
+
+drop policy if exists "Users can CRUD own placement applications" on public.placement_applications;
+create policy "Users can CRUD own placement applications"
+  on public.placement_applications
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
+

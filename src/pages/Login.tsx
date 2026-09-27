@@ -56,7 +56,7 @@ export default function Login() {
     }
 
     toast('Welcome back! 👋', 'success')
-    navigate('/')
+    navigate('/today')
   }
 
   return (
