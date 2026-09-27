@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { AppLayout } from '@/components/ui/AppLayout'
-import { placementService, subscribeToRealtime } from '@/services/dbServices'
+import { placementService, subscribeToRealtime, isPlacementDeleted } from '@/services/dbServices'
 import { supabase } from '@/services/supabase'
 import type { PlacementApplication, PlacementStatus } from '@/types'
 import {
@@ -148,7 +148,11 @@ export default function PlacementsPage() {
     // 2. Listen to instant cross-device broadcast messages (e.g. deletions on another device)
     const broadcastChannel = supabase
       .channel('ht_placements_broadcast')
-      .on('broadcast', { event: 'placements_changed' }, () => {
+      .on('broadcast', { event: 'placements_changed' }, (msg) => {
+        if (msg?.payload?.deletedIds && Array.isArray(msg.payload.deletedIds)) {
+          const sigs = msg.payload.deletedIds as string[]
+          setPlacements((prev) => prev.filter((p) => !isPlacementDeleted(p, sigs)))
+        }
         loadData()
       })
       .subscribe()
@@ -291,8 +295,15 @@ export default function PlacementsPage() {
   // Delete
   const handleDelete = async (id: string) => {
     try {
-      await placementService.deletePlacement(id)
-      setPlacements((prev) => prev.filter((p) => p.id !== id))
+      const target = placements.find((p) => p.id === id)
+      await placementService.deletePlacement(id, target?.company_name, target?.job_role)
+      setPlacements((prev) =>
+        prev.filter(
+          (p) =>
+            p.id !== id &&
+            (!target?.company_name || p.company_name.toLowerCase().trim() !== target.company_name.toLowerCase().trim())
+        )
+      )
       setDeletingId(null)
       if (viewingPlacement?.id === id) setViewingPlacement(null)
       showToast.success('Application deleted')

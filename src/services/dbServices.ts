@@ -1790,6 +1790,7 @@ const INITIAL_PLACEMENTS: PlacementApplication[] = [
 
 const PLACEMENTS_SEEDED_KEY = 'ht_placements_seeded_v1'
 const DELETED_PLACEMENTS_KEY = 'ht_deleted_placement_ids'
+const DELETED_SIGNATURES_KEY = 'ht_deleted_placement_signatures'
 
 function getDeletedPlacementIds(): string[] {
   try {
@@ -1800,7 +1801,7 @@ function getDeletedPlacementIds(): string[] {
   }
 }
 
-function setDeletedPlacementIds(ids: string[]): void {
+export function setDeletedPlacementIds(ids: string[]): void {
   try {
     localStorage.setItem(DELETED_PLACEMENTS_KEY, JSON.stringify(ids))
   } catch {
@@ -1808,11 +1809,56 @@ function setDeletedPlacementIds(ids: string[]): void {
   }
 }
 
+export function getDeletedPlacementSignatures(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETED_SIGNATURES_KEY)
+    const sigs: string[] = raw ? JSON.parse(raw) : []
+    const ids = getDeletedPlacementIds()
+    return Array.from(new Set([...ids, ...sigs]))
+  } catch {
+    return getDeletedPlacementIds()
+  }
+}
+
+export function addDeletedPlacementSignature(id: string, companyName?: string, jobRole?: string): string[] {
+  const current = getDeletedPlacementSignatures()
+  const toAdd = [id]
+  if (companyName?.trim()) {
+    const c = companyName.toLowerCase().trim()
+    toAdd.push(c)
+    if (jobRole?.trim()) {
+      toAdd.push(`${c}:::${jobRole.toLowerCase().trim()}`)
+    }
+  }
+  const updated = Array.from(new Set([...current, ...toAdd]))
+  try {
+    localStorage.setItem(DELETED_SIGNATURES_KEY, JSON.stringify(updated))
+    localStorage.setItem(DELETED_PLACEMENTS_KEY, JSON.stringify(updated))
+  } catch {
+    // ignore
+  }
+  return updated
+}
+
+export function isPlacementDeleted(p: PlacementApplication, signatures: string[]): boolean {
+  if (!p) return false
+  if (signatures.includes(p.id)) return true
+  if (p.company_name) {
+    const c = p.company_name.toLowerCase().trim()
+    if (signatures.includes(c)) return true
+    if (p.job_role) {
+      const sig = `${c}:::${p.job_role.toLowerCase().trim()}`
+      if (signatures.includes(sig)) return true
+    }
+  }
+  return false
+}
+
 const PLACEMENTS_CLOUD_NOTE_TITLE = '__ht_placements_cloud_v1__'
 
 /**
  * Cloud Bridge: Syncs placements to Supabase Notes table, user metadata, and Realtime Broadcast.
- * Guarantees instant cross-device deletion and synchronization even before custom SQL tables exist.
+ * Guarantees instant cross-device deletion and synchronization across all devices.
  */
 export async function syncPlacementsToCloudBackup(
   userId: string,
@@ -1821,21 +1867,35 @@ export async function syncPlacementsToCloudBackup(
 ): Promise<void> {
   if (!userId) return
 
+  const signatures = Array.from(new Set([...deletedIds, ...getDeletedPlacementSignatures()]))
   const payload = {
-    placements,
-    deletedIds,
+    placements: placements.filter((p) => !isPlacementDeleted(p, signatures)),
+    deletedIds: signatures,
+    deletedSignatures: signatures,
     seeded: true,
     updated_at: new Date().toISOString(),
   }
 
-  // 1. Send instant real-time broadcast so all open devices update immediately
+  // 1. Send instant real-time broadcast with proper subscription verification
   try {
     const channel = supabase.channel('ht_placements_broadcast')
-    channel.send({
-      type: 'broadcast',
-      event: 'placements_changed',
-      payload: { deletedIds, count: placements.length, timestamp: Date.now() },
-    })
+    if (channel.state === 'joined') {
+      channel.send({
+        type: 'broadcast',
+        event: 'placements_changed',
+        payload: { deletedIds: signatures, count: payload.placements.length, timestamp: Date.now() },
+      })
+    } else {
+      channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          channel.send({
+            type: 'broadcast',
+            event: 'placements_changed',
+            payload: { deletedIds: signatures, count: payload.placements.length, timestamp: Date.now() },
+          })
+        }
+      })
+    }
   } catch {
     // ignore
   }
@@ -2009,7 +2069,7 @@ export const placementService = {
    * Pulls from Supabase with fallback to cloud bridge and local storage.
    */
   async getAllPlacements(): Promise<PlacementApplication[]> {
-    let deletedIds = getDeletedPlacementIds()
+    let signatures = getDeletedPlacementSignatures()
     const isSeededLocally = localStorage.getItem(PLACEMENTS_SEEDED_KEY) === 'true'
 
     try {
@@ -2017,7 +2077,15 @@ export const placementService = {
       if (userData?.user) {
         const userId = userData.user.id
 
-        // 1. First, check if primary `placement_applications` table exists and returns data
+        // Fetch cloud backup to merge latest deleted signatures from other devices
+        const backup = await getPlacementsFromCloudBackup(userId)
+        if (backup?.deletedIds && Array.isArray(backup.deletedIds)) {
+          signatures = Array.from(new Set([...signatures, ...backup.deletedIds]))
+          localStorage.setItem(DELETED_SIGNATURES_KEY, JSON.stringify(signatures))
+          localStorage.setItem(DELETED_PLACEMENTS_KEY, JSON.stringify(signatures))
+        }
+
+        // 1. First, check primary `placement_applications` table
         let tableSucceeded = false
         try {
           const { data, error } = await supabase
@@ -2029,62 +2097,19 @@ export const placementService = {
           if (!error && data !== null) {
             tableSucceeded = true
 
-            // Merge cloud backup deleted IDs
-            const backup = await getPlacementsFromCloudBackup(userId)
-            if (backup?.deletedIds && Array.isArray(backup.deletedIds)) {
-              deletedIds = Array.from(new Set([...deletedIds, ...backup.deletedIds]))
-              setDeletedPlacementIds(deletedIds)
+            // Cleanly filter out any application deleted on this or any other device
+            const cloudData = (data as PlacementApplication[]).filter((p) => !isPlacementDeleted(p, signatures))
+
+            // Background delete any orphaned rows in Supabase table
+            const orphaned = (data as PlacementApplication[]).filter((p) => isPlacementDeleted(p, signatures))
+            for (const orph of orphaned) {
+              supabase.from('placement_applications').delete().eq('id', orph.id).then(() => {}, () => {})
             }
 
-            const cloudData = (data as PlacementApplication[]).filter((p) => !deletedIds.includes(p.id))
-
-            if (cloudData.length > 0) {
-              setLocal(STORAGE_KEYS.placements, cloudData)
-              localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
-              // Keep cloud backup in sync
-              syncPlacementsToCloudBackup(userId, cloudData, deletedIds).catch(() => {})
-              return cloudData
-            }
-
-            // If table has 0 rows, check if cloud backup has items from other devices
-            if (backup && backup.placements && backup.placements.length > 0) {
-              const toMigrate = backup.placements.filter((p) => !deletedIds.includes(p.id))
-              if (toMigrate.length > 0) {
-                for (const item of toMigrate) {
-                  try {
-                    await supabase.from('placement_applications').insert({
-                      user_id: userId,
-                      company_name: item.company_name,
-                      job_role: item.job_role,
-                      application_date: item.application_date || null,
-                      application_deadline: item.application_deadline || null,
-                      status: item.status,
-                      job_url: item.job_url || null,
-                      location: item.location || null,
-                      ctc: item.ctc || null,
-                      eligibility: item.eligibility || null,
-                      test_date: item.test_date || null,
-                      interview_date: item.interview_date || null,
-                      follow_up_date: item.follow_up_date || null,
-                      contact_name: item.contact_name || null,
-                      contact_email: item.contact_email || null,
-                      resume_version: item.resume_version || null,
-                      notes: item.notes || null,
-                    })
-                  } catch {
-                    // ignore
-                  }
-                }
-                setLocal(STORAGE_KEYS.placements, toMigrate)
-                localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
-                return toMigrate
-              }
-            }
-
-            // Table has 0 rows and no items to migrate -> User deleted all items or started clean
-            setLocal(STORAGE_KEYS.placements, [])
+            setLocal(STORAGE_KEYS.placements, cloudData)
             localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
-            return []
+            syncPlacementsToCloudBackup(userId, cloudData, signatures).catch(() => {})
+            return cloudData
           }
         } catch {
           tableSucceeded = false
@@ -2092,14 +2117,9 @@ export const placementService = {
 
         // 2. If table doesn't exist yet or had error, retrieve seamlessly from Cloud Bridge
         if (!tableSucceeded) {
-          const backup = await getPlacementsFromCloudBackup(userId)
           if (backup) {
-            if (backup.deletedIds && Array.isArray(backup.deletedIds)) {
-              deletedIds = Array.from(new Set([...deletedIds, ...backup.deletedIds]))
-              setDeletedPlacementIds(deletedIds)
-            }
             if (backup.placements && Array.isArray(backup.placements)) {
-              const active = backup.placements.filter((p) => !deletedIds.includes(p.id))
+              const active = backup.placements.filter((p) => !isPlacementDeleted(p, signatures))
               setLocal(STORAGE_KEYS.placements, active)
               localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
               return active
@@ -2116,8 +2136,9 @@ export const placementService = {
       // Fallback
     }
 
-    // 3. Fallback to local storage
-    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements).filter((p) => !deletedIds.includes(p.id))
+    // 3. Fallback to local storage (strictly filtered with deleted signatures)
+    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements).filter((p) => !isPlacementDeleted(p, signatures))
+    setLocal(STORAGE_KEYS.placements, local)
     if (local.length === 0 && !isSeededLocally) {
       localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
       setLocal(STORAGE_KEYS.placements, INITIAL_PLACEMENTS)
@@ -2275,7 +2296,7 @@ export const placementService = {
         }
 
         // Sync to cloud backup
-        await syncPlacementsToCloudBackup(userData.user.id, local, getDeletedPlacementIds())
+        await syncPlacementsToCloudBackup(userData.user.id, local, getDeletedPlacementSignatures())
       }
     } catch (e) {
       console.warn('Placement cloud update error:', e)
@@ -2289,29 +2310,29 @@ export const placementService = {
   },
 
   /**
-   * Delete a placement application
+   * Delete a placement application across all devices
    */
-  async deletePlacement(id: string): Promise<boolean> {
-    // 1. Permanently track in deleted IDs so it NEVER resurrects on any device
-    const deletedIds = getDeletedPlacementIds()
-    if (!deletedIds.includes(id)) {
-      deletedIds.push(id)
-      setDeletedPlacementIds(deletedIds)
-    }
+  async deletePlacement(id: string, companyName?: string, jobRole?: string): Promise<boolean> {
+    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
+    const placementToDelete = local.find((p) => p.id === id)
+    const targetComp = companyName || placementToDelete?.company_name
+    const targetRole = jobRole || placementToDelete?.job_role
+
+    // 1. Permanently track in deleted signatures (ID, company name, composite signature)
+    const updatedSignatures = addDeletedPlacementSignature(id, targetComp, targetRole)
 
     // 2. Mark as seeded so empty state does not trigger re-seeding
     localStorage.setItem(PLACEMENTS_SEEDED_KEY, 'true')
 
-    // 3. Update localStorage
-    const local = getLocal<PlacementApplication>(STORAGE_KEYS.placements)
-    const placementToDelete = local.find((p) => p.id === id)
-    const filtered = local.filter((p) => p.id !== id)
+    // 3. Update localStorage (filter out any matching ID or signatures)
+    const filtered = local.filter((p) => !isPlacementDeleted(p, updatedSignatures))
     setLocal(STORAGE_KEYS.placements, filtered)
 
     // 4. Delete from Supabase & sync across all devices via cloud bridge
     try {
       const { data: userData } = await supabase.auth.getUser()
       if (userData?.user) {
+        const userId = userData.user.id
         const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
         if (isUuid) {
           try {
@@ -2319,25 +2340,39 @@ export const placementService = {
               .from('placement_applications')
               .delete()
               .eq('id', id)
-              .eq('user_id', userData.user.id)
+              .eq('user_id', userId)
           } catch {
             // ignore
           }
         }
 
-        // Sync deletion across all devices via cloud backup
-        await syncPlacementsToCloudBackup(userData.user.id, filtered, deletedIds)
+        // Also delete from Supabase table by company_name (e.g. 'tcs')
+        if (targetComp) {
+          try {
+            await supabase
+              .from('placement_applications')
+              .delete()
+              .ilike('company_name', targetComp.trim())
+              .eq('user_id', userId)
+          } catch {
+            // ignore
+          }
+        }
+
+        // Sync deletion across all devices via cloud backup (notes, user_metadata, realtime broadcast)
+        await syncPlacementsToCloudBackup(userId, filtered, updatedSignatures)
       }
     } catch (e) {
       console.warn('Supabase placement delete exception:', e)
     }
 
     // 5. Clean up associated reminders
-    if (placementToDelete?.company_name) {
+    const cleanComp = targetComp || placementToDelete?.company_name
+    if (cleanComp) {
       try {
         const rems = getLocal<Reminder>(STORAGE_KEYS.reminders)
         const updatedRems = rems.filter(
-          (r) => !r.title.toLowerCase().includes(placementToDelete.company_name.toLowerCase())
+          (r) => !r.title.toLowerCase().includes(cleanComp.toLowerCase().trim())
         )
         setLocal(STORAGE_KEYS.reminders, updatedRems)
       } catch {
