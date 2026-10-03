@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Supabase Edge Function: send-push
-// Sends Web Push Notifications to registered phone/browser endpoints (Runs on Deno runtime)
+// Sends Web Push Notifications to registered device/phone endpoints via VAPID keys
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -9,6 +9,7 @@ import webpush from 'https://esm.sh/web-push@3.6.7'
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 
 serve(async (req: Request) => {
@@ -27,20 +28,49 @@ serve(async (req: Request) => {
 
     webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY)
 
-    const { user_id, title, body, url, category } = await req.json()
-
-    // Initialize Supabase Admin Client
+    // Initialize Supabase Admin Client with service role key
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Check user notification settings
+    const bodyData = await req.json().catch(() => ({}))
+    let targetUserId = bodyData.user_id
+
+    // If user_id is not directly in body, extract it from Authorization JWT
+    if (!targetUserId) {
+      const authHeader = req.headers.get('Authorization')
+      if (authHeader) {
+        const token = authHeader.replace('Bearer ', '').trim()
+        const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
+        if (!userError && user) {
+          targetUserId = user.id
+        }
+      }
+    }
+
+    if (!targetUserId) {
+      return new Response(JSON.stringify({ error: 'Missing user_id for push notification' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+
+    const {
+      title = 'Hostel Life Tracker 🔔',
+      body = 'You have a reminder',
+      url = '/reminders',
+      tag = `hostel-reminder-${Date.now()}`,
+      category,
+      reminderId,
+    } = bodyData
+
+    // Check user notification settings if category is specified
     if (category) {
       const { data: settings } = await supabaseAdmin
         .from('notification_settings')
         .select('*')
-        .eq('user_id', user_id)
+        .eq('user_id', targetUserId)
         .maybeSingle()
 
       if (settings && settings[`${category}_reminders`] === false) {
@@ -51,47 +81,70 @@ serve(async (req: Request) => {
       }
     }
 
-    // Get user push subscriptions
-    const { data: subscriptions, error } = await supabaseAdmin
+    // Get active push subscriptions for target user
+    const { data: subscriptions, error: subError } = await supabaseAdmin
       .from('push_subscriptions')
       .select('*')
-      .eq('user_id', user_id)
+      .eq('user_id', targetUserId)
 
-    if (error || !subscriptions || subscriptions.length === 0) {
-      return new Response(JSON.stringify({ message: 'No active push subscriptions found for user' }), {
+    if (subError || !subscriptions || subscriptions.length === 0) {
+      return new Response(JSON.stringify({ success: false, message: 'No active push subscriptions found for this user' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,
       })
     }
 
+    // Prepare push payload
     const payload = JSON.stringify({
-      title: title || 'Hostel Life Tracker 🔔',
-      body: body || '',
-      url: url || '/',
+      title,
+      body,
+      url,
+      tag,
+      reminderId,
+      timestamp: Date.now(),
     })
 
-    // Send push to all registered devices/phones for this user
+    // Send push to each subscribed device/phone
     const results = await Promise.allSettled(
-      subscriptions.map((sub: any) =>
-        webpush.sendNotification(
-          {
-            endpoint: sub.endpoint,
-            keys: {
-              p256dh: sub.p256dh,
-              auth: sub.auth,
+      subscriptions.map(async (sub: any) => {
+        try {
+          await webpush.sendNotification(
+            {
+              endpoint: sub.endpoint,
+              keys: {
+                p256dh: sub.p256dh,
+                auth: sub.auth,
+              },
             },
-          },
-          payload
-        )
-      )
+            payload
+          )
+          return { endpoint: sub.endpoint, status: 'sent' }
+        } catch (err: any) {
+          // If subscription has expired (HTTP 404 or 410 Gone), automatically prune it from database
+          if (err?.statusCode === 410 || err?.statusCode === 404) {
+            await supabaseAdmin.from('push_subscriptions').delete().eq('endpoint', sub.endpoint)
+          }
+          throw err
+        }
+      })
     )
 
-    return new Response(JSON.stringify({ success: true, results }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
+    const successfulSends = results.filter((r) => r.status === 'fulfilled').length
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        sentCount: successfulSends,
+        totalDevices: subscriptions.length,
+        results,
+      }),
+      {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+      }
+    )
   } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), {
+    return new Response(JSON.stringify({ error: err.message || 'Unknown server error' }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 500,
     })

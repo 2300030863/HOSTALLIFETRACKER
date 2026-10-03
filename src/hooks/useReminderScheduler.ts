@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { reminderService, attendanceService, notificationService, getTodayStr } from '@/services/dbServices'
-import { getNotificationSettings } from '@/services/pushNotification'
+import { getNotificationSettings, showPersistentNotification } from '@/services/pushNotification'
 import { showToast } from '@/components/ui/Toast'
 import type { Reminder } from '@/types'
 
@@ -223,35 +223,14 @@ async function triggerAttendanceNotification(title: string, body: string) {
     // Audio play fallback
   }
 
-  // 3. Native Device / Browser Push Notification
-  if ('Notification' in window) {
-    if (Notification.permission === 'granted') {
-      try {
-        if ('serviceWorker' in navigator) {
-          const registration = await navigator.serviceWorker.ready
-          if (registration && registration.showNotification) {
-            await registration.showNotification(title, {
-              body,
-              icon: '/favicon.svg',
-              badge: '/favicon.svg',
-              vibrate: [200, 100, 200],
-              data: { url: '/' },
-            } as any)
-            return
-          }
-        }
-
-        new Notification(title, { body, icon: '/favicon.svg' })
-      } catch (e) {
-        console.warn('Service worker notification failed, falling back to standard Notification:', e)
-        try {
-          new Notification(title, { body, icon: '/favicon.svg' })
-        } catch {}
-      }
-    } else if (Notification.permission === 'default') {
-      Notification.requestPermission()
-    }
-  }
+  // 3. Native Mobile & Desktop Persistent Notification (Service Worker)
+  await showPersistentNotification(title, {
+    body,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: `attendance-${Date.now()}`,
+    url: '/',
+  })
 }
 
 async function triggerDeviceNotification(reminder: Reminder) {
@@ -269,33 +248,12 @@ async function triggerDeviceNotification(reminder: Reminder) {
     // Audio play fallback
   }
 
-  // 3. Native Device / Browser Push Notification
-  if ('Notification' in window) {
-    if (Notification.permission === 'granted') {
-      try {
-        if ('serviceWorker' in navigator) {
-          const registration = await navigator.serviceWorker.ready
-          if (registration && registration.showNotification) {
-            await registration.showNotification(title, {
-              body,
-              icon: '/favicon.svg',
-              badge: '/favicon.svg',
-              vibrate: [200, 100, 200],
-              data: { url: '/reminders' },
-            } as any)
-            return
-          }
-        }
-
-        new Notification(title, { body, icon: '/favicon.svg' })
-      } catch (e) {
-        console.warn('Service worker notification failed, falling back to standard Notification:', e)
-        try {
-          new Notification(title, { body, icon: '/favicon.svg' })
-        } catch {}
-      }
-    } else if (Notification.permission === 'default') {
-      Notification.requestPermission()
-    }
-  }
+  // 3. Native Mobile & Desktop Persistent Notification (Service Worker)
+  await showPersistentNotification(title, {
+    body,
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+    tag: `reminder-${reminder.id}-${Date.now()}`,
+    url: '/reminders',
+  })
 }

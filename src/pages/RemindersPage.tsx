@@ -12,9 +12,22 @@ import {
   Bell,
   BellOff,
   CheckCircle2,
+  ShieldCheck,
+  Send,
+  RefreshCw,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import { showToast } from '@/components/ui/Toast'
+import {
+  requestAndSubscribePush,
+  showPersistentNotification,
+  checkNotificationDiagnostics,
+  sendTestPushNotification,
+  type NotificationDiagnostics,
+} from '@/services/pushNotification'
 
 // Load previously fired notification keys from localStorage to prevent duplicate popups across page reloads
 const getStoredNotifiedKeys = (): Set<string> => {
@@ -52,6 +65,20 @@ export default function RemindersPage() {
 
   const [notificationPermission, setNotificationPermission] =
     useState<NotificationPermission>('default')
+  const [diagnostics, setDiagnostics] = useState<NotificationDiagnostics>({
+    isSupported: true,
+    isSecureContext: true,
+    permission: 'default',
+    hasServiceWorker: false,
+    hasPushManager: false,
+    isSubscribed: false,
+    endpoint: null,
+    lastNotificationTime: null,
+    lastPushError: null,
+  })
+  const [showDiagnostics, setShowDiagnostics] = useState(false)
+  const [isEnablingPush, setIsEnablingPush] = useState(false)
+  const [isTestingPush, setIsTestingPush] = useState(false)
 
   const [isCheckingNotifications, setIsCheckingNotifications] =
     useState(false)
@@ -74,16 +101,20 @@ export default function RemindersPage() {
   }, [])
 
   // ---------------------------------------------------------
-  // CHECK BROWSER NOTIFICATION SUPPORT
+  // CHECK BROWSER NOTIFICATION SUPPORT & DIAGNOSTICS
   // ---------------------------------------------------------
 
-  useEffect(() => {
-    if ('Notification' in window) {
-      setNotificationPermission(Notification.permission)
-    } else {
-      setNotificationPermission('denied')
+  const refreshDiagnostics = useCallback(async () => {
+    const diag = await checkNotificationDiagnostics()
+    setDiagnostics(diag)
+    if (diag.permission !== 'unsupported') {
+      setNotificationPermission(diag.permission)
     }
   }, [])
+
+  useEffect(() => {
+    refreshDiagnostics()
+  }, [refreshDiagnostics])
 
   // ---------------------------------------------------------
   // LOAD DATA + REALTIME
@@ -100,52 +131,43 @@ export default function RemindersPage() {
   }, [loadData])
 
   // ---------------------------------------------------------
-  // ENABLE NOTIFICATIONS
+  // ENABLE NOTIFICATIONS & REAL WEB PUSH SUBSCRIPTION
   // ---------------------------------------------------------
 
   const enableNotifications = async () => {
+    setIsEnablingPush(true)
     try {
       if (!('Notification' in window)) {
-        showToast.error(
-          'This browser does not support desktop notifications.'
-        )
+        showToast.error('Notifications are not supported on this browser.')
         return
       }
 
-      const permission = await Notification.requestPermission()
+      await requestAndSubscribePush()
+      await refreshDiagnostics()
+      showToast.success('Mobile push notifications enabled & subscribed! 🔔')
 
-      setNotificationPermission(permission)
-
-      if (permission === 'granted') {
-        showToast.success('Notifications enabled successfully')
-
-        // Immediately send a test notification
-        sendBrowserNotification(
-          'Hostel Life Tracker',
-          '🔔 Notifications are working correctly!',
-          'notification-test'
-        )
-      } else if (permission === 'denied') {
-        showToast.error(
-          'Notifications are blocked. Allow notifications in browser settings.'
-        )
-      }
-    } catch (error) {
-      console.error('Notification permission error:', error)
-      showToast.error('Could not enable notifications')
+      // Send a test notification through the production path
+      await sendTestPushNotification()
+      await refreshDiagnostics()
+    } catch (error: any) {
+      console.error('Notification permission/push error:', error)
+      showToast.error(error.message || 'Could not enable notifications')
+      await refreshDiagnostics()
+    } finally {
+      setIsEnablingPush(false)
     }
   }
 
   // ---------------------------------------------------------
-  // SEND BROWSER NOTIFICATION
+  // SEND PERSISTENT NOTIFICATION VIA SERVICE WORKER
   // ---------------------------------------------------------
 
-  const sendBrowserNotification = useCallback((
+  const sendBrowserNotification = useCallback(async (
     title: string,
     body: string,
     notificationId: string
   ) => {
-    if (!('Notification' in window)) {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
       return
     }
 
@@ -170,26 +192,18 @@ export default function RemindersPage() {
       notificationId
     ).catch(console.error)
 
-    try {
-      const notification = new Notification(title, {
-        body,
-        icon: '/icons/icon-192.png',
-        badge: '/icons/icon-192.png',
-        tag: notificationId,
-        requireInteraction: false,
-      })
-
-      notification.onclick = () => {
-        window.focus()
-        notification.close()
-      }
-    } catch (error) {
-      console.error('Failed to display notification:', error)
-    }
+    // Persistent Mobile & Desktop Notification via Service Worker
+    await showPersistentNotification(title, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: notificationId,
+      url: '/reminders',
+    })
   }, [])
 
   // ---------------------------------------------------------
-  // TEST NOTIFICATION
+  // TEST NOTIFICATION (PROVES REAL PUSH PIPELINE)
   // ---------------------------------------------------------
 
   const testNotification = async () => {
@@ -203,18 +217,17 @@ export default function RemindersPage() {
       return
     }
 
-    const testId = `manual-test-${Date.now()}`
-
-    // Remove from duplicate set so every test works
-    notifiedRemindersRef.current.delete(testId)
-
-    sendBrowserNotification(
-      'Hostel Life Tracker',
-      '🔔 Test notification successful! Your reminders can now alert you.',
-      testId
-    )
-
-    showToast.success('Test notification sent')
+    setIsTestingPush(true)
+    try {
+      const res = await sendTestPushNotification()
+      await refreshDiagnostics()
+      showToast.success(`Test notification sent! (${res.message})`)
+    } catch (err: any) {
+      showToast.error(err.message || 'Failed to dispatch test notification')
+      await refreshDiagnostics()
+    } finally {
+      setIsTestingPush(false)
+    }
   }
 
   // ---------------------------------------------------------
@@ -676,77 +689,181 @@ export default function RemindersPage() {
           </button>
         </div>
 
-        {/* NOTIFICATION CONTROL */}
+        {/* NOTIFICATION CONTROL & PRODUCTION DIAGNOSTICS */}
         <div
           className={cn(
-            'rounded-3xl border p-5',
+            'rounded-3xl border p-5 shadow-sm space-y-4',
             notificationEnabled
-              ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900'
-              : 'bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900'
+              ? 'bg-emerald-50/70 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-900/60'
+              : 'bg-amber-50/70 border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/60'
           )}
         >
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-
             <div className="flex items-start gap-3">
               <div
                 className={cn(
-                  'p-3 rounded-2xl',
+                  'p-3 rounded-2xl shrink-0',
                   notificationEnabled
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300'
                     : 'bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300'
                 )}
               >
-                {notificationEnabled ? (
-                  <Bell size={20} />
-                ) : (
-                  <BellOff size={20} />
-                )}
+                {notificationEnabled ? <Bell size={20} /> : <BellOff size={20} />}
               </div>
 
               <div>
-                <p className="font-bold text-sm text-surface-900 dark:text-white">
-                  {notificationEnabled
-                    ? 'Notifications are enabled'
-                    : notificationBlocked
-                      ? 'Notifications are blocked'
-                      : 'Notifications are disabled'}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="font-bold text-sm text-surface-900 dark:text-white">
+                    {notificationEnabled
+                      ? 'Mobile & Web Push Notifications Active'
+                      : notificationBlocked
+                      ? 'Notifications Blocked'
+                      : 'Notifications are Disabled'}
+                  </p>
+                  <span
+                    className={cn(
+                      'px-2 py-0.5 rounded-full text-[10px] font-black uppercase',
+                      notificationEnabled
+                        ? 'bg-emerald-200/80 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'
+                        : notificationBlocked
+                        ? 'bg-rose-200/80 text-rose-800 dark:bg-rose-900 dark:text-rose-200'
+                        : 'bg-amber-200/80 text-amber-800 dark:bg-amber-900 dark:text-amber-200'
+                    )}
+                  >
+                    {notificationEnabled ? '🟢 GRANTED' : notificationBlocked ? '🔴 BLOCKED' : '🟡 NOT SET'}
+                  </span>
+                </div>
 
                 <p className="text-xs text-surface-500 mt-1">
                   {notificationEnabled
-                    ? 'Your browser can show reminder pop-ups.'
+                    ? 'Service Worker and Push Subscription are ready. Reminders can alert you on your phone.'
                     : notificationBlocked
-                      ? 'Allow notifications in your browser site settings.'
-                      : 'Enable notifications to receive reminder pop-ups.'}
+                    ? 'Allow notifications in your browser/device site settings to receive reminders.'
+                    : 'Enable notifications to receive timely hostel attendance alerts and study reminders on mobile.'}
                 </p>
               </div>
             </div>
 
-            <div className="flex gap-2">
-
+            <div className="flex flex-wrap items-center gap-2">
               {!notificationEnabled && !notificationBlocked && (
                 <button
                   onClick={enableNotifications}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors"
+                  disabled={isEnablingPush}
+                  className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-md shadow-indigo-600/25 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
                 >
-                  <span className="flex items-center gap-2">
-                    <Bell size={15} />
-                    Enable Notifications
-                  </span>
+                  <Bell size={15} />
+                  <span>{isEnablingPush ? 'Subscribing...' : 'Enable Notifications'}</span>
                 </button>
               )}
 
               {notificationEnabled && (
                 <button
                   onClick={testNotification}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-colors"
+                  disabled={isTestingPush}
+                  className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-md shadow-emerald-600/25 transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Sends test push notification through production path"
                 >
-                  Test Notification
+                  <Send size={14} />
+                  <span>{isTestingPush ? 'Sending Test...' : 'Send Test Notification'}</span>
                 </button>
               )}
 
+              <button
+                onClick={() => setShowDiagnostics((prev) => !prev)}
+                className="px-3.5 py-2.5 rounded-xl bg-white dark:bg-surface-800 border border-surface-200 dark:border-white/[0.08] text-surface-700 dark:text-surface-200 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer hover:bg-surface-100 dark:hover:bg-surface-700"
+                title="View notification diagnostics"
+              >
+                <ShieldCheck size={15} className="text-indigo-500" />
+                <span>Diagnostics</span>
+                {showDiagnostics ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </button>
             </div>
           </div>
+
+          {/* Expandable Production Diagnostics Card */}
+          {showDiagnostics && (
+            <div className="p-4 rounded-2xl bg-white dark:bg-surface-900 border border-surface-200 dark:border-white/[0.08] space-y-2.5 animate-in fade-in">
+              <div className="flex items-center justify-between pb-2 border-b border-surface-100 dark:border-white/[0.06]">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={16} className="text-indigo-500" />
+                  <h4 className="text-xs font-black uppercase tracking-wider text-surface-800 dark:text-surface-200">
+                    Production Notification Diagnostics
+                  </h4>
+                </div>
+                <button
+                  onClick={refreshDiagnostics}
+                  className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <RefreshCw size={12} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-surface-500">Notification Support:</span>
+                  <span className="font-bold">
+                    {diagnostics.isSupported ? '✅ Supported' : '❌ Unsupported'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-surface-500">Secure Context:</span>
+                  <span className="font-bold">
+                    {diagnostics.isSecureContext ? '✅ HTTPS' : '❌ Not HTTPS'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-surface-500">Permission:</span>
+                  <span className="font-bold">
+                    {diagnostics.permission === 'granted'
+                      ? '🟢 Granted'
+                      : diagnostics.permission === 'denied'
+                      ? '🔴 Denied'
+                      : '🟡 Not requested'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-surface-500">Service Worker:</span>
+                  <span className="font-bold">
+                    {diagnostics.hasServiceWorker ? '🟢 Registered' : '🔴 Not registered'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-surface-500">Push:</span>
+                  <span className="font-bold">
+                    {diagnostics.isSubscribed ? '🟢 Subscribed' : '🟡 Not subscribed'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5">
+                  <span className="text-surface-500">Subscription:</span>
+                  <span className="font-bold">
+                    {diagnostics.endpoint ? 'Connected' : 'Not connected'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-0.5 sm:col-span-2">
+                  <span className="text-surface-500">Last Notification:</span>
+                  <span className="font-semibold text-surface-800 dark:text-surface-200">
+                    {diagnostics.lastNotificationTime
+                      ? new Date(diagnostics.lastNotificationTime).toLocaleString()
+                      : 'None yet'}
+                  </span>
+                </div>
+
+                {diagnostics.lastPushError && (
+                  <div className="sm:col-span-2 p-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 text-[11px] text-rose-600 dark:text-rose-400 flex items-start gap-1.5">
+                    <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                    <span>Last Push Error: {diagnostics.lastPushError}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* REMINDER LIST */}
