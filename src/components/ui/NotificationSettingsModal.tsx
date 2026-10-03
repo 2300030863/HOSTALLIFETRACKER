@@ -252,7 +252,7 @@ export function NotificationSettingsModal({ isOpen, onClose }: NotificationSetti
               {
                 key: 'attendance_reminders',
                 title: '🖐️ Attendance Reminders',
-                desc: '9:00 PM → 10:20 PM reminders & 10:30 PM ABSENT alert',
+                desc: '9:00 PM → 10:00 PM reminders (every 10 mins) & 10:00 PM ABSENT alert',
               },
               {
                 key: 'money_given_reminders',

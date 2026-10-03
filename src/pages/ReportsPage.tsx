@@ -558,7 +558,7 @@ export default function ReportsPage() {
                       {attendance.status === 'present' ? '🖐️ PRESENT' : attendance.status === 'late' ? '⏰ LATE' : '❌ ABSENT'}
                     </span>
                   ) : (
-                    '⏳ PENDING (WINDOW: 9:00 PM - 10:30 PM)'
+                    '⏳ PENDING (WINDOW: 9:00 PM - 10:00 PM)'
                   )}
                 </p>
               </div>

@@ -98,7 +98,7 @@ export function checkAttendanceWindow(dateObj: Date = new Date()): AttendanceWin
   const currentTotalMinutes = hours * 60 + minutes
 
   const openMinutes = 21 * 60 // 9:00 PM
-  const closeMinutes = 23 * 60 // 11:00 PM
+  const closeMinutes = 22 * 60 // 10:00 PM
 
   const serverTimeStr = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -117,7 +117,7 @@ export function checkAttendanceWindow(dateObj: Date = new Date()): AttendanceWin
       isOpen: false,
       isBeforeWindow: false,
       isAfterWindow: true,
-      statusMessage: "Today's attendance window closed at 11:00 PM",
+      statusMessage: "Today's attendance window closed at 10:00 PM",
       serverTimeStr,
     }
   }
@@ -126,7 +126,7 @@ export function checkAttendanceWindow(dateObj: Date = new Date()): AttendanceWin
     isOpen: true,
     isBeforeWindow: false,
     isAfterWindow: false,
-    statusMessage: 'Attendance Window Open (9:00 PM ? 11:00 PM)',
+    statusMessage: 'Attendance Window Open (9:00 PM – 10:00 PM)',
     serverTimeStr,
   }
 }
@@ -189,9 +189,9 @@ export const attendanceService = {
       }
     }
 
-    // Auto-mark ABSENT after 10:30 PM if not marked yet
+    // Auto-mark ABSENT after 10:00 PM if not marked yet
     if (!record && windowInfo.isAfterWindow) {
-      record = await this.markAttendance('absent', 'Attendance window expired')
+      record = await this.markAttendance('absent', 'Attendance window expired at 10:00 PM')
     }
 
     return record
@@ -205,7 +205,7 @@ export const attendanceService = {
     // Clear old absent reason if changing status to present or late without an explicit new reason
     const finalReason = (status === 'present' || status === 'late') ? (reason || null) : (reason || null)
 
-    // Window info check (logs notice if outside 9:00 PM - 10:30 PM window, but allows manual submission)
+    // Window info check (logs notice if outside 9:00 PM - 10:00 PM window, but allows manual submission)
     let autoReason = finalReason
     if (!windowInfo.isOpen && !autoReason) {
       if (windowInfo.isBeforeWindow) {

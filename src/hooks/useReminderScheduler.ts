@@ -7,7 +7,7 @@ import type { Reminder } from '@/types'
 // Key for tracking fired reminders today to avoid duplicate notifications
 const FIRED_KEY = 'ht_fired_reminders'
 
-const ABSENT_CHECK_SLOT = '22:30'
+const ABSENT_CHECK_SLOT = '22:00'
 
 function getFiredMap(): Record<string, string> {
   try {
@@ -79,10 +79,10 @@ export function useReminderScheduler() {
 
         const firedMap = getFiredMap()
 
-        // ─── 1. Attendance Reminder Schedule Check (9:00 PM to 10:30 PM) ───
-        // Active between 21:00 (9:00 PM) and 22:30 (10:30 PM)
-        if (totalMinutes >= 21 * 60 && totalMinutes < 22 * 60 + 30) {
-          const slotMin = Math.floor(currentMin / 20) * 20
+        // ─── 1. Attendance Reminder Schedule Check (9:00 PM to 10:00 PM, every 10 minutes) ───
+        // Active between 21:00 (9:00 PM) and 22:00 (10:00 PM)
+        if (totalMinutes >= 21 * 60 && totalMinutes < 22 * 60) {
+          const slotMin = Math.floor(currentMin / 10) * 10
           const slotHHMM = `${String(currentHour).padStart(2, '0')}:${String(slotMin).padStart(2, '0')}`
           const fireId = `att_rem_${todayStr}_${slotHHMM}`
 
@@ -100,11 +100,11 @@ export function useReminderScheduler() {
             } else if (hasAttendance === false) {
               const settings = await getNotificationSettings()
               if (settings.attendance_reminders) {
-                const isFinal = slotHHMM === '22:20' || totalMinutes >= 22 * 60 + 15
+                const isFinal = slotMin === 50 || totalMinutes >= 21 * 60 + 50
                 const title = isFinal ? '🖐️ Final Attendance Reminder!' : '🖐️ Attendance Reminder'
                 const message = isFinal
-                  ? "Today's attendance window closes in 10 minutes (10:30 PM)! Please submit your attendance now."
-                  : "Please submit today's hostel attendance! The attendance window is open."
+                  ? "Today's attendance window closes in 10 minutes (10:00 PM)! Please submit your attendance now."
+                  : `Please submit today's hostel attendance! The window is open (9:00 PM – 10:00 PM). Slot: ${slotHHMM}.`
 
                 const notificationKey = `attendance-${todayStr}-${slotHHMM}`
 
@@ -126,7 +126,7 @@ export function useReminderScheduler() {
           }
         }
 
-        // ─── 2. Attendance Window Expiration Check (10:30 PM) ───
+        // ─── 2. Attendance Window Expiration Check (10:00 PM) ───
         if (currentHHMM >= ABSENT_CHECK_SLOT && totalMinutes < 23 * 60 + 59) {
           const absentFireId = `att_absent_${todayStr}`
 
@@ -143,13 +143,13 @@ export function useReminderScheduler() {
               setFiredMap(firedMap)
             } else if (hasAttendance === false) {
               try {
-                await attendanceService.markAttendance('absent', 'Attendance window expired at 10:30 PM')
+                await attendanceService.markAttendance('absent', 'Attendance window expired at 10:00 PM')
                 showToast.error("❌ Attendance Closed: You were automatically marked ABSENT for today.")
 
                 await notificationService.createNotification(
                   'attendance',
                   '❌ Marked Absent',
-                  'You were automatically marked ABSENT because attendance was not submitted before 10:30 PM.',
+                  'You were automatically marked ABSENT because attendance was not submitted before 10:00 PM.',
                   now.toISOString(),
                   `attendance-absent-${todayStr}`
                 )
@@ -157,7 +157,7 @@ export function useReminderScheduler() {
                 firedMap[absentFireId] = new Date().toISOString()
                 setFiredMap(firedMap)
               } catch (err: any) {
-                console.error('Failed to auto-mark absent at 10:30 PM:', err)
+                console.error('Failed to auto-mark absent at 10:00 PM:', err)
               }
             }
           }

@@ -107,6 +107,174 @@ serve(async (req: Request) => {
       }
     }
 
+    // 2. Check Attendance Window: 9:00 PM to 10:00 PM IST (hours === 21), Every 10 Minutes
+    if (hours === 21) {
+      const slotMin = Math.floor(minutes / 10) * 10
+      const slotHHMM = `21:${String(slotMin).padStart(2, '0')}`
+      const notificationKey = `attendance-${todayStr}-${slotHHMM}`
+      const isFinal = slotMin === 50
+
+      const title = isFinal ? '🖐️ Final Attendance Reminder!' : '🖐️ Attendance Reminder'
+      const message = isFinal
+        ? "Today's attendance window closes in 10 minutes (10:00 PM)! Please submit your attendance now."
+        : `Please submit today's hostel attendance! The window is open (9:00 PM – 10:00 PM). Slot: ${slotHHMM}.`
+
+      const { data: allSubs } = await supabaseAdmin
+        .from('push_subscriptions')
+        .select('user_id, endpoint, p256dh, auth')
+
+      if (allSubs && allSubs.length > 0) {
+        const userSubsMap: Record<string, typeof allSubs> = {}
+        for (const sub of allSubs) {
+          if (!userSubsMap[sub.user_id]) userSubsMap[sub.user_id] = []
+          userSubsMap[sub.user_id].push(sub)
+        }
+
+        for (const [userId, subs] of Object.entries(userSubsMap)) {
+          // Check user notification settings
+          const { data: settings } = await supabaseAdmin
+            .from('notification_settings')
+            .select('attendance_reminders')
+            .eq('user_id', userId)
+            .maybeSingle()
+
+          if (settings && settings.attendance_reminders === false) {
+            continue
+          }
+
+          // Check if attendance already marked today
+          const { data: att } = await supabaseAdmin
+            .from('attendance')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('attendance_date', todayStr)
+            .maybeSingle()
+
+          if (att) {
+            continue // Already submitted, stop reminders
+          }
+
+          // Check if notification already logged for this 10-minute slot
+          const { data: existing } = await supabaseAdmin
+            .from('notifications')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('notification_key', notificationKey)
+            .maybeSingle()
+
+          if (!existing) {
+            await supabaseAdmin.from('notifications').insert({
+              user_id: userId,
+              type: 'attendance',
+              title,
+              message,
+              scheduled_at: now.toISOString(),
+              notification_key: notificationKey,
+              read: false,
+            })
+
+            const payload = JSON.stringify({
+              title,
+              body: message,
+              url: '/',
+              tag: notificationKey,
+            })
+
+            for (const sub of subs) {
+              try {
+                await webpush.sendNotification(
+                  { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+                  payload
+                )
+                sentCount++
+              } catch (e: any) {
+                if (e?.statusCode === 410 || e?.statusCode === 404) {
+                  await supabaseAdmin.from('push_subscriptions').delete().eq('endpoint', sub.endpoint)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Attendance Expiration & Auto-Absent at 10:00 PM IST (hours === 22)
+    if (hours === 22 && minutes < 30) {
+      const absentKey = `attendance-absent-${todayStr}`
+      const { data: allSubs } = await supabaseAdmin
+        .from('push_subscriptions')
+        .select('user_id, endpoint, p256dh, auth')
+
+      if (allSubs && allSubs.length > 0) {
+        const userSubsMap: Record<string, typeof allSubs> = {}
+        for (const sub of allSubs) {
+          if (!userSubsMap[sub.user_id]) userSubsMap[sub.user_id] = []
+          userSubsMap[sub.user_id].push(sub)
+        }
+
+        for (const [userId, subs] of Object.entries(userSubsMap)) {
+          const { data: att } = await supabaseAdmin
+            .from('attendance')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('attendance_date', todayStr)
+            .maybeSingle()
+
+          if (!att) {
+            const { data: existing } = await supabaseAdmin
+              .from('notifications')
+              .select('id')
+              .eq('user_id', userId)
+              .eq('notification_key', absentKey)
+              .maybeSingle()
+
+            if (!existing) {
+              await supabaseAdmin.from('attendance').insert({
+                user_id: userId,
+                attendance_date: todayStr,
+                status: 'absent',
+                reason: 'Attendance window expired at 10:00 PM',
+              })
+
+              const absentTitle = '❌ Marked Absent'
+              const absentMsg = 'You were automatically marked ABSENT because attendance was not submitted before 10:00 PM.'
+
+              await supabaseAdmin.from('notifications').insert({
+                user_id: userId,
+                type: 'attendance',
+                title: absentTitle,
+                message: absentMsg,
+                scheduled_at: now.toISOString(),
+                notification_key: absentKey,
+                read: false,
+              })
+
+              const payload = JSON.stringify({
+                title: absentTitle,
+                body: absentMsg,
+                url: '/',
+                tag: absentKey,
+              })
+
+              for (const sub of subs) {
+                try {
+                  await webpush.sendNotification(
+                    { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+                    payload
+                  )
+                  sentCount++
+                } catch (e: any) {
+                  if (e?.statusCode === 410 || e?.statusCode === 404) {
+                    await supabaseAdmin.from('push_subscriptions').delete().eq('endpoint', sub.endpoint)
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     return new Response(JSON.stringify({ success: true, sentCount, timestamp: now.toISOString() }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       status: 200,

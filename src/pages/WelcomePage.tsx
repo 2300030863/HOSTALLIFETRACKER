@@ -147,7 +147,7 @@ export default function WelcomePage() {
           <div className="p-4 rounded-2xl bg-surface-900/60 border border-white/[0.08] backdrop-blur-md space-y-1">
             <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
               <Clock size={16} />
-              <span>9:00 PM – 11:00 PM</span>
+              <span>9:00 PM – 10:00 PM</span>
             </div>
             <p className="text-xs font-bold text-white">Strict Attendance Window</p>
             <p className="text-[11px] text-surface-400">Auto-absent at curfew</p>
@@ -224,7 +224,7 @@ export default function WelcomePage() {
                 <h3 className="text-lg font-bold text-white flex items-center gap-2">
                   <span>🖐️ Biometric &amp; Daily Attendance Logic</span>
                   <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-950 text-amber-300 border border-amber-800">
-                    9:00 PM – 11:00 PM
+                    9:00 PM – 10:00 PM
                   </span>
                 </h3>
               </div>

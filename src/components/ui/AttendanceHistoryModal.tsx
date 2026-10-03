@@ -187,7 +187,7 @@ export function AttendanceHistoryModal({ isOpen, onClose }: AttendanceHistoryMod
                     Full daily log since tracking started
                   </p>
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold whitespace-nowrap">
-                    9:00 PM → 10:30 PM
+                    9:00 PM → 10:00 PM
                   </span>
                 </div>
               </div>

@@ -377,7 +377,7 @@ export default function Today() {
                 <p className="text-xs text-surface-500 leading-snug mt-1">
                   {attendance
                     ? `Marked as ${attendance.status.toUpperCase()}${attendance.reason ? ` • Reason: ${attendance.reason}` : attendance.check_in ? ` • Checked in at ${format(new Date(attendance.check_in), 'hh:mm a')}` : ''}`
-                    : `${checkAttendanceWindow().statusMessage} • Window: 9:00 PM – 11:00 PM`}
+                    : `${checkAttendanceWindow().statusMessage} • Window: 9:00 PM – 10:00 PM`}
                 </p>
               </div>
               <div className="flex-shrink-0">
